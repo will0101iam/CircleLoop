@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>circleloop - Run UI Mock</title>
+    <style>
+      :root {
+        --bg: #0b0c10;
+        --panel: #111318;
+        --panel2: #0f1116;
+        --text: #e8e9ee;
+        --muted: #a7adbb;
+        --border: rgba(255, 255, 255, 0.08);
+        --accent: #7c5cff;
+        --good: #2dd4bf;
+        --bad: #fb7185;
+        --warn: #fbbf24;
+        --chip: rgba(124, 92, 255, 0.18);
+        --shadow: 0 12px 50px rgba(0, 0, 0, 0.45);
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+          monospace;
+        --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
+          "Segoe UI Emoji";
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        background: radial-gradient(1200px 600px at 20% 0%, rgba(124, 92, 255, 0.18), transparent 55%),
+          radial-gradient(900px 500px at 80% 15%, rgba(45, 212, 191, 0.12), transparent 55%), var(--bg);
+        color: var(--text);
+      }
+
+      .app {
+        height: 100%;
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(17, 19, 24, 0.7);
+        backdrop-filter: blur(10px);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 650;
+        letter-spacing: 0.3px;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 0 6px rgba(124, 92, 255, 0.18);
+      }
+      .top-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+        font-size: 12px;
+        user-select: none;
+      }
+      .chip strong {
+        color: var(--text);
+        font-weight: 650;
+      }
+      .btn {
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        padding: 8px 10px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: 0.12s ease;
+      }
+      .btn:hover {
+        background: rgba(255, 255, 255, 0.07);
+      }
+      .btn:active {
+        transform: translateY(1px);
+      }
+      .btn.primary {
+        border-color: rgba(124, 92, 255, 0.5);
+        background: rgba(124, 92, 255, 0.18);
+      }
+      .btn.primary:hover {
+        background: rgba(124, 92, 255, 0.26);
+      }
+      .btn.danger {
+        border-color: rgba(251, 113, 133, 0.5);
+        background: rgba(251, 113, 133, 0.14);
+      }
+      .btn.danger:hover {
+        background: rgba(251, 113, 133, 0.2);
+      }
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .workspacebar {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(15, 17, 22, 0.85);
+      }
+      .workspace {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }
+      .path {
+        font-family: var(--mono);
+        font-size: 12px;
+        padding: 7px 10px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--border);
+        color: var(--text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 780px;
+      }
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+      }
+      .status-dot.good {
+        background: var(--good);
+      }
+      .status-dot.bad {
+        background: var(--bad);
+      }
+      .muted {
+        color: var(--muted);
+      }
+
+      .main {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 14px;
+        padding: 14px;
+        height: 100%;
+      }
+
+      .panel {
+        background: rgba(17, 19, 24, 0.72);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        min-height: 0;
+      }
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .panel-title {
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+      }
+      .panel-body {
+        padding: 12px 14px;
+        min-height: 0;
+        height: calc(100% - 46px);
+        overflow: auto;
+      }
+
+      .input-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        align-items: center;
+      }
+      .task-input {
+        width: 100%;
+        resize: vertical;
+        min-height: 54px;
+        max-height: 160px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.22);
+        color: var(--text);
+        outline: none;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      .task-input:focus {
+        border-color: rgba(124, 92, 255, 0.55);
+        box-shadow: 0 0 0 4px rgba(124, 92, 255, 0.16);
+      }
+      .run-actions {
+        display: grid;
+        gap: 8px;
+        justify-items: stretch;
+      }
+
+      .kv {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 10px;
+      }
+      .kv .chip {
+        background: var(--chip);
+        border-color: rgba(124, 92, 255, 0.18);
+      }
+
+      .timeline {
+        display: grid;
+        gap: 10px;
+        margin-top: 14px;
+      }
+      .step {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.18);
+        padding: 10px 10px;
+        cursor: pointer;
+      }
+      .step:hover {
+        background: rgba(0, 0, 0, 0.24);
+      }
+      .step.selected {
+        outline: 2px solid rgba(124, 92, 255, 0.55);
+      }
+      .step-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .step-kind {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .badge {
+        font-size: 11px;
+        font-weight: 700;
+        padding: 4px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text);
+      }
+      .badge.tool {
+        border-color: rgba(45, 212, 191, 0.35);
+        background: rgba(45, 212, 191, 0.12);
+      }
+      .badge.assistant {
+        border-color: rgba(124, 92, 255, 0.38);
+        background: rgba(124, 92, 255, 0.15);
+      }
+      .badge.error {
+        border-color: rgba(251, 113, 133, 0.4);
+        background: rgba(251, 113, 133, 0.12);
+      }
+      .step-time {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.55);
+        white-space: nowrap;
+      }
+      .step-summary {
+        margin-top: 8px;
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--text);
+        white-space: pre-wrap;
+      }
+      .empty {
+        color: rgba(255, 255, 255, 0.55);
+        font-size: 13px;
+        line-height: 1.6;
+        padding: 10px 2px;
+      }
+
+      .detail {
+        display: grid;
+        gap: 12px;
+      }
+      .detail-block {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        overflow: hidden;
+        background: rgba(0, 0, 0, 0.16);
+      }
+      .detail-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 10px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .detail-head .title {
+        font-size: 12px;
+        color: var(--muted);
+        font-weight: 700;
+        letter-spacing: 0.2px;
+      }
+      .copy {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.75);
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--border);
+        padding: 6px 9px;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      pre {
+        margin: 0;
+        padding: 10px;
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.45;
+        overflow: auto;
+        max-height: 280px;
+      }
+
+      .modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      .modal.open {
+        display: flex;
+      }
+      .modal-card {
+        width: min(820px, 100%);
+        background: rgba(17, 19, 24, 0.96);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+      .modal-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      .modal-head .title {
+        font-weight: 800;
+        font-size: 13px;
+      }
+      .modal-body {
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+      }
+      .hint {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.68);
+        line-height: 1.55;
+      }
+      .kpath {
+        font-family: var(--mono);
+        padding: 8px 10px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.25);
+        color: var(--text);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="topbar">
+        <div class="brand">
+          <div class="dot"></div>
+          <div>circleloop</div>
+        </div>
+        <div class="top-actions">
+          <div class="chip">
+            <span class="status-dot bad" id="cfgDot"></span>
+            <span>MiniMax</span>
+            <strong id="cfgStatus">未配置</strong>
+          </div>
+          <button class="btn" id="btnShowConfig">配置说明</button>
+        </div>
+      </div>
+
+      <div class="workspacebar">
+        <div class="workspace">
+          <div class="chip">
+            <span class="muted">Workspace</span>
+            <strong id="wsStatus">未选择</strong>
+          </div>
+          <div class="path" id="wsPath">/Users/bytedance/Desktop/cl</div>
+          <button class="btn" id="btnChangeWs">Change</button>
+          <button class="btn" id="btnRefreshWs">Refresh</button>
+        </div>
+        <div class="workspace" style="justify-content: flex-end">
+          <div class="chip"><span class="muted">Model</span><strong>MiniMax-M2.7</strong></div>
+          <div class="chip">
+            <span class="muted">Context</span>
+            <strong id="ctxMeter">0k / 500k</strong>
+          </div>
+          <div class="chip"><span class="muted">Steps</span><strong id="stepMeter">0 / 50</strong></div>
+        </div>
+      </div>
+
+      <div class="main">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Run</div>
+            <div class="top-actions">
+              <button class="btn primary" id="btnRun">Run</button>
+              <button class="btn danger" id="btnStop" disabled>Stop</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="input-row">
+              <textarea
+                id="taskInput"
+                class="task-input"
+                placeholder="输入任务。例如：在这个仓库里搜索 auth 的入口文件，并解释调用链。"
+              >在这个仓库里搜索 auth 相关实现，并解释入口在哪。</textarea>
+              <div class="run-actions">
+                <button class="btn" id="btnInsertExample">示例任务</button>
+                <button class="btn" id="btnClear">清空</button>
+              </div>
+            </div>
+
+            <div class="kv">
+              <div class="chip"><span class="muted">Provider</span><strong>OpenAI Compatible</strong></div>
+              <div class="chip"><span class="muted">Base URL</span><strong>https://api.minimaxi.com/v1</strong></div>
+              <div class="chip"><span class="muted">Compression</span><strong>500k</strong></div>
+              <div class="chip"><span class="muted">Persist</span><strong>SQLite (audit)</strong></div>
+            </div>
+
+            <div class="timeline" id="timeline"></div>
+            <div class="empty" id="emptyHint">
+              这里会按步骤追加运行日志：LLM 输出、工具调用、工具结果摘要、最终答案。点击某一步可在右侧查看 raw
+              args/result。
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Tool Detail</div>
+            <button class="btn" id="btnFakeCfg">切换配置状态</button>
+          </div>
+          <div class="panel-body">
+            <div class="detail" id="detail">
+              <div class="empty">
+                选择左侧 Timeline 的某一步，这里会显示 raw args/result，用于调试与审计（不会在日志里泄露 API Key）。
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal" id="modal">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div class="title">MiniMax 配置文件说明（手动编辑）</div>
+          <button class="btn" id="btnCloseModal">关闭</button>
+        </div>
+        <div class="modal-body">
+          <div class="hint">
+            在 MVP 里我们不做写入 UI。请手动编辑配置文件并重启应用（或点击 Refresh）。<br />
+            Base URL 使用 OpenAI compatible：<code>https://api.minimaxi.com/v1</code>；Model：<code>MiniMax-M2.7</code>。
+          </div>
+          <div class="kpath" id="cfgPath">$APPCONFIG/circleloop/config.json</div>
+          <div class="detail-block">
+            <div class="detail-head">
+              <div class="title">示例 config.json</div>
+              <button class="copy" data-copy="#cfgExample">复制</button>
+            </div>
+            <pre id="cfgExample">{
+  "provider": "minimax",
+  "baseUrl": "https://api.minimaxi.com/v1",
+  "apiKey": "YOUR_MINIMAX_API_KEY",
+  "model": "MiniMax-M2.7"
+}</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const state = {
+        configured: false,
+        workspaceSelected: true,
+        running: false,
+        steps: [],
+        selectedStepId: null,
+        maxSteps: 50,
+        timer: null,
+        stepCount: 0,
+        ctxK: 0,
+      }
+
+      const $ = (sel) => document.querySelector(sel)
+      const timelineEl = $('#timeline')
+      const emptyHintEl = $('#emptyHint')
+      const detailEl = $('#detail')
+
+      function now() {
+        const d = new Date()
+        return d.toLocaleTimeString('zh-CN', { hour12: false })
+      }
+
+      function setConfigUI() {
+        const dot = $('#cfgDot')
+        const label = $('#cfgStatus')
+        if (state.configured) {
+          dot.classList.remove('bad')
+          dot.classList.add('good')
+          label.textContent = '已配置'
+        } else {
+          dot.classList.remove('good')
+          dot.classList.add('bad')
+          label.textContent = '未配置'
+        }
+      }
+
+      function setWorkspaceUI() {
+        $('#wsStatus').textContent = state.workspaceSelected ? '已选择' : '未选择'
+      }
+
+      function setMeters() {
+        $('#stepMeter').textContent = `${Math.min(state.stepCount, state.maxSteps)} / ${state.maxSteps}`
+        $('#ctxMeter').textContent = `${state.ctxK}k / 500k`
+      }
+
+      function addStep(step) {
+        state.steps.unshift(step)
+        state.stepCount++
+        state.ctxK = Math.min(520, state.ctxK + (step.tokensK || 3))
+        setMeters()
+        renderTimeline()
+      }
+
+      function renderTimeline() {
+        emptyHintEl.style.display = state.steps.length ? 'none' : 'block'
+        timelineEl.innerHTML = ''
+        for (const s of state.steps) {
+          const el = document.createElement('div')
+          el.className = `step ${state.selectedStepId === s.id ? 'selected' : ''}`
+          el.dataset.stepId = s.id
+          el.innerHTML = `
+            <div class="step-top">
+              <div class="step-kind">
+                <span class="badge ${s.kind}">${s.kind === 'tool' ? 'TOOL' : s.kind === 'error' ? 'ERROR' : 'LLM'}</span>
+                <span>${escapeHtml(s.title)}</span>
+              </div>
+              <div class="step-time">${escapeHtml(s.time)}</div>
+            </div>
+            <div class="step-summary">${escapeHtml(s.summary)}</div>
+          `
+          el.addEventListener('click', () => {
+            state.selectedStepId = s.id
+            renderTimeline()
+            renderDetail(s)
+          })
+          timelineEl.appendChild(el)
+        }
+      }
+
+      function renderDetail(step) {
+        detailEl.innerHTML = ''
+        const blocks = []
+
+        blocks.push(renderDetailBlock('Raw Args', step.rawArgs || {}))
+        blocks.push(renderDetailBlock('Raw Result', step.rawResult || {}))
+        blocks.push(renderDetailBlock('Prompt Summary (compressed)', step.promptSummary || {}))
+
+        for (const b of blocks) detailEl.appendChild(b)
+      }
+
+      function renderDetailBlock(title, value) {
+        const wrap = document.createElement('div')
+        wrap.className = 'detail-block'
+        const id = `pre-${Math.random().toString(16).slice(2)}`
+        wrap.innerHTML = `
+          <div class="detail-head">
+            <div class="title">${escapeHtml(title)}</div>
+            <button class="copy" data-copy="#${id}">复制</button>
+          </div>
+          <pre id="${id}">${escapeHtml(JSON.stringify(value, null, 2))}</pre>
+        `
+        wrap.querySelector('[data-copy]').addEventListener('click', (e) => {
+          const sel = e.currentTarget.getAttribute('data-copy')
+          const text = document.querySelector(sel).textContent
+          navigator.clipboard.writeText(text)
+        })
+        return wrap
+      }
+
+      function escapeHtml(str) {
+        return String(str)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#039;')
+      }
+
+      function setRunning(r) {
+        state.running = r
+        $('#btnRun').disabled = r
+        $('#btnStop').disabled = !r
+      }
+
+      function simulateLoop() {
+        const task = $('#taskInput').value.trim()
+        if (!state.workspaceSelected) {
+          addStep({
+            id: crypto.randomUUID(),
+            kind: 'error',
+            title: 'workspace',
+            time: now(),
+            summary: '未选择 workspace：请先选择工作目录。',
+            rawArgs: { workspacePath: null },
+            rawResult: { code: 'WORKSPACE_REQUIRED' },
+            promptSummary: { kept: ['task'], dropped: [] },
+            tokensK: 1,
+          })
+          return
+        }
+        if (!state.configured) {
+          addStep({
+            id: crypto.randomUUID(),
+            kind: 'error',
+            title: 'config',
+            time: now(),
+            summary: 'MiniMax 未配置：请编辑 $APPCONFIG/circleloop/config.json 并重试。',
+            rawArgs: { configPath: '$APPCONFIG/circleloop/config.json' },
+            rawResult: { code: 'MODEL_NOT_CONFIGURED' },
+            promptSummary: { kept: ['task'], dropped: [] },
+            tokensK: 1,
+          })
+          return
+        }
+
+        addStep({
+          id: crypto.randomUUID(),
+          kind: 'assistant',
+          title: 'plan',
+          time: now(),
+          summary:
+            '我会先扫描目录结构，使用 search_code 定位关键词，然后读取关键文件并总结入口与调用链。',
+          rawArgs: { model: 'MiniMax-M2.7', temperature: 0.2 },
+          rawResult: { type: 'assistant_message' },
+          promptSummary: { kept: ['task', 'workspaceSummary', 'toolSchema'], dropped: ['oldToolResults'] },
+          tokensK: 6,
+        })
+
+        const script = [
+          {
+            kind: 'tool',
+            title: 'list_dir',
+            summary: '列出 workspace 根目录（path="."）',
+            rawArgs: { path: '.' },
+            rawResult: { ok: true, data: { entries: [{ name: 'src', isDir: true }, { name: 'README.md', isDir: false }] } },
+            tokensK: 5,
+          },
+          {
+            kind: 'tool',
+            title: 'search_code',
+            summary: '搜索关键词：auth',
+            rawArgs: { query: 'auth', glob: '**/*.{ts,tsx,rs,md,json}' },
+            rawResult: {
+              ok: true,
+              data: {
+                matches: [
+                  { file: 'src/auth/index.ts', line: 12, preview: 'export function auth(...) { ... }' },
+                  { file: 'src-tauri/src/lib.rs', line: 3, preview: 'tauri::Builder::default()...' },
+                ],
+              },
+            },
+            tokensK: 9,
+          },
+          {
+            kind: 'tool',
+            title: 'read_file',
+            summary: '读取 src/auth/index.ts',
+            rawArgs: { path: 'src/auth/index.ts' },
+            rawResult: { ok: true, data: { content: 'export function auth() { /* ... */ }' } },
+            tokensK: 12,
+          },
+          {
+            kind: 'assistant',
+            title: 'final',
+            summary:
+              '入口在 src/auth/index.ts 的 auth(...)。上层调用链为 ...（此处展示最终回答）。\n\n下一步建议：把 auth 相关逻辑提取为工具并接入 tool loop。',
+            rawArgs: { task },
+            rawResult: { type: 'final' },
+            promptSummary: { kept: ['recentSteps', 'criticalFindings'], dropped: ['largeFileBodies'] },
+            tokensK: 14,
+          },
+        ]
+
+        let i = 0
+        setRunning(true)
+        state.timer = setInterval(() => {
+          if (!state.running) return
+          if (i >= script.length || state.stepCount >= state.maxSteps) {
+            clearInterval(state.timer)
+            state.timer = null
+            setRunning(false)
+            return
+          }
+          const item = script[i++]
+          addStep({
+            id: crypto.randomUUID(),
+            kind: item.kind,
+            title: item.title,
+            time: now(),
+            summary: item.summary,
+            rawArgs: item.rawArgs,
+            rawResult: item.rawResult,
+            promptSummary: item.promptSummary || {},
+            tokensK: item.tokensK || 3,
+          })
+        }, 520)
+      }
+
+      $('#btnRun').addEventListener('click', () => {
+        simulateLoop()
+      })
+
+      $('#btnStop').addEventListener('click', () => {
+        setRunning(false)
+        if (state.timer) {
+          clearInterval(state.timer)
+          state.timer = null
+        }
+        addStep({
+          id: crypto.randomUUID(),
+          kind: 'assistant',
+          title: 'stopped',
+          time: now(),
+          summary: '已停止本次 Run。你可以修改任务后重新运行。',
+          rawArgs: {},
+          rawResult: { stopped: true },
+          promptSummary: { kept: ['timeline'], dropped: [] },
+          tokensK: 2,
+        })
+      })
+
+      $('#btnClear').addEventListener('click', () => {
+        state.steps = []
+        state.selectedStepId = null
+        state.stepCount = 0
+        state.ctxK = 0
+        setMeters()
+        renderTimeline()
+        detailEl.innerHTML =
+          '<div class="empty">选择左侧 Timeline 的某一步，这里会显示 raw args/result，用于调试与审计（不会在日志里泄露 API Key）。</div>'
+      })
+
+      $('#btnInsertExample').addEventListener('click', () => {
+        $('#taskInput').value = '列出仓库中和 “sqlite” 相关的文件，并解释它们的职责与调用关系。'
+      })
+
+      $('#btnShowConfig').addEventListener('click', () => {
+        $('#modal').classList.add('open')
+      })
+      $('#btnCloseModal').addEventListener('click', () => {
+        $('#modal').classList.remove('open')
+      })
+      $('#modal').addEventListener('click', (e) => {
+        if (e.target === $('#modal')) $('#modal').classList.remove('open')
+      })
+      for (const el of document.querySelectorAll('[data-copy]')) {
+        el.addEventListener('click', (e) => {
+          const sel = e.currentTarget.getAttribute('data-copy')
+          const text = document.querySelector(sel).textContent
+          navigator.clipboard.writeText(text)
+        })
+      }
+
+      $('#btnFakeCfg').addEventListener('click', () => {
+        state.configured = !state.configured
+        setConfigUI()
+      })
+
+      $('#btnChangeWs').addEventListener('click', () => {
+        state.workspaceSelected = !state.workspaceSelected
+        setWorkspaceUI()
+      })
+      $('#btnRefreshWs').addEventListener('click', () => {
+        addStep({
+          id: crypto.randomUUID(),
+          kind: 'assistant',
+          title: 'workspace',
+          time: now(),
+          summary: '已刷新 workspace 状态（mock）。真实实现会从系统与配置中恢复。',
+          rawArgs: { workspacePath: $('#wsPath').textContent },
+          rawResult: { ok: true },
+          promptSummary: { kept: ['workspacePath'], dropped: [] },
+          tokensK: 2,
+        })
+      })
+
+      setConfigUI()
+      setWorkspaceUI()
+      setMeters()
+    </script>
+  </body>
+</html>

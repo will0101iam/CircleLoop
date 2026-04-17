@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>circleloop - IDE UI Mock</title>
+    <style>
+      :root {
+        --bg: #0b0c10;
+        --panel: rgba(17, 19, 24, 0.72);
+        --panel2: rgba(15, 17, 22, 0.85);
+        --text: #e8e9ee;
+        --muted: #a7adbb;
+        --border: rgba(255, 255, 255, 0.08);
+        --accent: #7c5cff;
+        --good: #2dd4bf;
+        --bad: #fb7185;
+        --warn: #fbbf24;
+        --shadow: 0 12px 50px rgba(0, 0, 0, 0.45);
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+          monospace;
+        --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
+          "Segoe UI Emoji";
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        background: radial-gradient(1200px 600px at 18% 0%, rgba(124, 92, 255, 0.18), transparent 55%),
+          radial-gradient(900px 500px at 82% 15%, rgba(45, 212, 191, 0.12), transparent 55%), var(--bg);
+        color: var(--text);
+      }
+      .app {
+        height: 100%;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(17, 19, 24, 0.7);
+        backdrop-filter: blur(10px);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 0 6px rgba(124, 92, 255, 0.18);
+      }
+      .top-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+        font-size: 12px;
+        user-select: none;
+      }
+      .chip strong {
+        color: var(--text);
+        font-weight: 700;
+      }
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+      }
+      .status-dot.good {
+        background: var(--good);
+      }
+      .status-dot.bad {
+        background: var(--bad);
+      }
+      .btn {
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        padding: 8px 10px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 650;
+        transition: 0.12s ease;
+      }
+      .btn:hover {
+        background: rgba(255, 255, 255, 0.07);
+      }
+      .btn.primary {
+        border-color: rgba(124, 92, 255, 0.5);
+        background: rgba(124, 92, 255, 0.18);
+      }
+      .btn.primary:hover {
+        background: rgba(124, 92, 255, 0.26);
+      }
+      .btn.danger {
+        border-color: rgba(251, 113, 133, 0.5);
+        background: rgba(251, 113, 133, 0.14);
+      }
+      .btn.danger:hover {
+        background: rgba(251, 113, 133, 0.2);
+      }
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 280px 1fr 360px;
+        gap: 12px;
+        padding: 12px;
+        min-height: 0;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .panel-title {
+        font-size: 12px;
+        color: var(--muted);
+        font-weight: 800;
+        letter-spacing: 0.2px;
+      }
+      .panel-body {
+        padding: 10px 12px;
+        overflow: auto;
+        min-height: 0;
+      }
+      .tabs {
+        display: inline-flex;
+        gap: 6px;
+        border: 1px solid var(--border);
+        padding: 4px;
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.18);
+      }
+      .tab {
+        padding: 6px 10px;
+        border-radius: 10px;
+        font-size: 12px;
+        color: var(--muted);
+        cursor: pointer;
+        user-select: none;
+        border: 1px solid transparent;
+      }
+      .tab.active {
+        color: var(--text);
+        border-color: rgba(124, 92, 255, 0.45);
+        background: rgba(124, 92, 255, 0.16);
+      }
+      .list {
+        display: grid;
+        gap: 8px;
+      }
+      .item {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.16);
+        cursor: pointer;
+      }
+      .item:hover {
+        background: rgba(0, 0, 0, 0.22);
+      }
+      .item .t {
+        font-weight: 750;
+        font-size: 13px;
+      }
+      .item .s {
+        margin-top: 4px;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .tree {
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.6;
+        color: rgba(255, 255, 255, 0.78);
+      }
+      .split {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        gap: 10px;
+        min-height: 0;
+      }
+      .codebox {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.2);
+        overflow: hidden;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-height: 360px;
+      }
+      .codehead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.02);
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.7);
+      }
+      pre {
+        margin: 0;
+        padding: 10px;
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.5;
+        overflow: auto;
+        white-space: pre;
+      }
+      .chat {
+        display: grid;
+        gap: 10px;
+      }
+      .msg {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 10px 10px;
+        background: rgba(0, 0, 0, 0.16);
+      }
+      .msg.you {
+        border-color: rgba(124, 92, 255, 0.35);
+        background: rgba(124, 92, 255, 0.12);
+      }
+      .msg .meta {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.55);
+        margin-bottom: 6px;
+      }
+      .msg .body {
+        font-size: 13px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+      .composer {
+        border-top: 1px solid var(--border);
+        background: rgba(15, 17, 22, 0.92);
+        padding: 10px 12px;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        align-items: center;
+      }
+      .prompt {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.22);
+        color: var(--text);
+        outline: none;
+        font-size: 13px;
+      }
+      .prompt:focus {
+        border-color: rgba(124, 92, 255, 0.55);
+        box-shadow: 0 0 0 4px rgba(124, 92, 255, 0.16);
+      }
+      .rightstack {
+        display: grid;
+        gap: 10px;
+      }
+      .promptbox {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.16);
+        overflow: hidden;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        min-height: 360px;
+      }
+      .prompthead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 10px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.02);
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.7);
+      }
+      .promptarea {
+        padding: 10px;
+        min-height: 0;
+      }
+      .promptarea textarea {
+        width: 100%;
+        resize: vertical;
+        min-height: 160px;
+        max-height: 520px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.22);
+        color: var(--text);
+        outline: none;
+        font-size: 13px;
+        line-height: 1.4;
+        font-family: var(--sans);
+      }
+      .promptarea textarea:focus {
+        border-color: rgba(124, 92, 255, 0.55);
+        box-shadow: 0 0 0 4px rgba(124, 92, 255, 0.16);
+      }
+      .promptfoot {
+        border-top: 1px solid var(--border);
+        padding: 10px;
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        align-items: center;
+        background: rgba(15, 17, 22, 0.35);
+      }
+      .kv {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .kv .chip {
+        justify-content: space-between;
+      }
+      .badge {
+        font-size: 11px;
+        font-weight: 800;
+        padding: 4px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.03);
+      }
+      .badge.tool {
+        border-color: rgba(45, 212, 191, 0.35);
+        background: rgba(45, 212, 191, 0.12);
+      }
+      .badge.llm {
+        border-color: rgba(124, 92, 255, 0.38);
+        background: rgba(124, 92, 255, 0.15);
+      }
+      .badge.err {
+        border-color: rgba(251, 113, 133, 0.4);
+        background: rgba(251, 113, 133, 0.12);
+      }
+      .log {
+        display: grid;
+        gap: 8px;
+      }
+      .logrow {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.16);
+        cursor: pointer;
+      }
+      .logrow:hover {
+        background: rgba(0, 0, 0, 0.22);
+      }
+      .logrow .top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 12px;
+      }
+      .logrow .sum {
+        margin-top: 6px;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .hidden {
+        display: none !important;
+      }
+      .hint {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.62);
+        line-height: 1.55;
+      }
+      @media (max-width: 1200px) {
+        .layout {
+          grid-template-columns: 260px 1fr;
+        }
+        .panel.right {
+          display: none;
+        }
+      }
+      @media (max-width: 900px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="topbar">
+        <div class="brand">
+          <div class="dot"></div>
+          <div>circleloop</div>
+        </div>
+        <div class="tabs" id="tabs">
+          <div class="tab active" data-tab="chat">Chat</div>
+          <div class="tab" data-tab="code">Code</div>
+          <div class="tab" data-tab="runs">Runs</div>
+          <div class="tab" data-tab="diff">Diff</div>
+        </div>
+        <div class="top-actions">
+          <div class="chip">
+            <span class="muted">Workspace</span>
+            <strong id="wsPath">/Users/bytedance/Desktop/cl</strong>
+          </div>
+          <div class="chip">
+            <span class="status-dot bad" id="cfgDot"></span>
+            <span class="muted">MiniMax</span>
+            <strong id="cfgStatus">未配置</strong>
+          </div>
+          <button class="btn" id="btnToggleCfg">切换配置</button>
+          <button class="btn primary" id="btnRun">Run</button>
+          <button class="btn danger" id="btnStop" disabled>Stop</button>
+        </div>
+      </div>
+
+      <div class="layout">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Chats / Tasks</div>
+            <button class="btn" id="btnNewChat">New</button>
+          </div>
+          <div class="panel-body">
+            <div class="list" id="chatList"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div class="top-actions">
+              <div class="chip"><span class="muted">Model</span><strong>MiniMax-M2.7</strong></div>
+              <div class="chip"><span class="muted">Context</span><strong id="ctxMeter">0k/500k</strong></div>
+              <div class="chip"><span class="muted">Steps</span><strong id="stepMeter">0/50</strong></div>
+            </div>
+          </div>
+          <div class="panel-body" style="padding: 10px 12px; overflow: hidden">
+            <div id="view-chat" style="height: 100%; overflow: auto">
+              <div class="chat" id="chatThread"></div>
+            </div>
+            <div id="view-code" class="hidden" style="height: 100%">
+              <div class="split" style="height: 100%">
+                <div class="panel" style="box-shadow: none; background: rgba(0,0,0,0.12)">
+                  <div class="panel-header">
+                    <div class="panel-title">Files</div>
+                    <button class="btn" id="btnFakeTree">Mock Tree</button>
+                  </div>
+                  <div class="panel-body">
+                    <div class="tree" id="fileTree"></div>
+                  </div>
+                </div>
+                <div class="codebox">
+                  <div class="codehead">
+                    <div id="fileName">src/App.tsx</div>
+                    <div class="muted">Editor (mock)</div>
+                  </div>
+                  <pre id="editor">export default function App() {
+  return &lt;div&gt;Hello circleloop&lt;/div&gt;
+}
+</pre>
+                </div>
+              </div>
+            </div>
+            <div id="view-runs" class="hidden" style="height: 100%; overflow: auto">
+              <div class="hint">每次 Run 的 timeline（mock）。</div>
+              <div class="log" id="runLog" style="margin-top: 10px"></div>
+            </div>
+            <div id="view-diff" class="hidden" style="height: 100%">
+              <div class="codebox" style="min-height: 420px">
+                <div class="codehead">
+                  <div>Patch Preview (mock)</div>
+                  <div class="muted">apply_patch 前预览</div>
+                </div>
+                <pre id="diffBox">diff --git a/src/App.tsx b/src/App.tsx
+@@
+-return &lt;div&gt;Hello circleloop&lt;/div&gt;
++return &lt;div&gt;Hello Claude Code style&lt;/div&gt;</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel right">
+          <div class="panel-header">
+            <div class="panel-title">Prompt</div>
+            <button class="btn" id="btnClear">Clear</button>
+          </div>
+          <div class="panel-body">
+            <div class="rightstack">
+              <div class="kv">
+                <div class="chip"><span class="muted">Provider</span><strong>OpenAI compat</strong></div>
+                <div class="chip"><span class="muted">Base URL</span><strong>api.minimaxi.com</strong></div>
+                <div class="chip"><span class="muted">Compression</span><strong>500k</strong></div>
+                <div class="chip"><span class="muted">Persist</span><strong>SQLite</strong></div>
+              </div>
+              <div class="promptbox">
+                <div class="prompthead">
+                  <div>输入任务</div>
+                  <div class="muted">Chat/Code 都从这里发起</div>
+                </div>
+                <div class="promptarea">
+                  <textarea
+                    id="prompt"
+                    placeholder='例如：搜索 auth 并解释入口；或：为 src/runtime/runtime.ts 加一个 list_sessions 的工具并写测试。'
+                  ></textarea>
+                  <div class="hint" style="margin-top: 10px">
+                    这里是右侧输入区，替代 Inspector。Tool 细节会在真正产品里以“折叠卡片/可展开”形式出现在 Runs 里。
+                  </div>
+                </div>
+                <div class="promptfoot">
+                  <button class="btn" id="btnAttach">Attach</button>
+                  <button class="btn primary" id="btnSend">Send/Run</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const state = {
+        configured: false,
+        running: false,
+        ctxK: 0,
+        stepCount: 0,
+        maxSteps: 50,
+        chats: [
+          { id: 'c1', title: '修复 auth 入口', subtitle: '找入口 + 解释调用链' },
+          { id: 'c2', title: '总结仓库结构', subtitle: '扫描目录 + 模块职责' },
+          { id: 'c3', title: '轻量问答', subtitle: '随手问一问' },
+        ],
+        selectedChatId: 'c1',
+        runSteps: [],
+      }
+
+      const $ = (s) => document.querySelector(s)
+      const chatList = $('#chatList')
+      const chatThread = $('#chatThread')
+      const runLog = $('#runLog')
+
+      function now() {
+        const d = new Date()
+        return d.toLocaleTimeString('zh-CN', { hour12: false })
+      }
+
+      function setConfigUI() {
+        $('#cfgStatus').textContent = state.configured ? '已配置' : '未配置'
+        $('#cfgDot').className = `status-dot ${state.configured ? 'good' : 'bad'}`
+      }
+
+      function setMeters() {
+        $('#ctxMeter').textContent = `${state.ctxK}k/500k`
+        $('#stepMeter').textContent = `${Math.min(state.stepCount, state.maxSteps)}/${state.maxSteps}`
+      }
+
+      function renderChatList() {
+        chatList.innerHTML = ''
+        for (const c of state.chats) {
+          const el = document.createElement('div')
+          el.className = 'item'
+          el.innerHTML = `<div class="t">${escapeHtml(c.title)}</div><div class="s">${escapeHtml(c.subtitle)}</div>`
+          el.addEventListener('click', () => {
+            state.selectedChatId = c.id
+            seedThread()
+          })
+          chatList.appendChild(el)
+        }
+      }
+
+      function seedThread() {
+        chatThread.innerHTML = ''
+        const title = state.chats.find((c) => c.id === state.selectedChatId)?.title ?? 'Chat'
+        addMsg('assistant', `我已加载会话：${title}\n\n你可以直接输入任务并点击 Send/Run。`, now())
+      }
+
+      function addMsg(role, text, time) {
+        const el = document.createElement('div')
+        el.className = `msg ${role === 'you' ? 'you' : ''}`
+        el.innerHTML = `<div class="meta"><span>${role === 'you' ? 'You' : 'Assistant'}</span><span>${escapeHtml(time)}</span></div><div class="body">${escapeHtml(text)}</div>`
+        chatThread.appendChild(el)
+        chatThread.scrollTop = chatThread.scrollHeight
+      }
+
+      function addRunStep(kind, title, summary, raw) {
+        const id = crypto.randomUUID()
+        state.runSteps.unshift({ id, kind, title, summary, time: now(), raw })
+        state.stepCount++
+        state.ctxK = Math.min(520, state.ctxK + 6)
+        setMeters()
+        renderRunLog()
+      }
+
+      function renderRunLog() {
+        runLog.innerHTML = ''
+        for (const s of state.runSteps) {
+          const el = document.createElement('div')
+          el.className = 'logrow'
+          el.innerHTML = `
+            <div class="top">
+              <div><span class="badge ${s.kind}">${s.kind.toUpperCase()}</span> ${escapeHtml(s.title)}</div>
+              <div class="muted">${escapeHtml(s.time)}</div>
+            </div>
+            <div class="sum">${escapeHtml(s.summary)}</div>
+          `
+          runLog.appendChild(el)
+        }
+      }
+
+      function setRunning(r) {
+        state.running = r
+        $('#btnRun').disabled = r
+        $('#btnStop').disabled = !r
+      }
+
+      function simulateRun(task) {
+        if (!state.configured) {
+          addMsg('assistant', 'MiniMax 未配置：请编辑 $APPCONFIG/circleloop/config.json 后重试。', now())
+          addRunStep('err', 'config', 'MODEL_NOT_CONFIGURED', { configPath: '$APPCONFIG/circleloop/config.json' })
+          return
+        }
+
+        addMsg('you', task, now())
+        addMsg('assistant', '收到。我会在 workspace 内搜索并读取关键文件，然后给出结论与下一步。', now())
+        addRunStep('llm', 'plan', '规划：list_dir → search_code → read_file → answer', { task })
+
+        setRunning(true)
+        const script = [
+          ['tool', 'list_dir', '列出根目录（path="."）', { args: { path: '.' }, result: { entries: ['src/', 'README.md'] } }],
+          ['tool', 'search_code', '搜索关键词 auth', { args: { query: 'auth' }, result: { matches: 2 } }],
+          ['tool', 'read_file', '读取 src/auth/index.ts', { args: { path: 'src/auth/index.ts' }, result: { bytes: 12000 } }],
+          ['llm', 'final', '入口在 src/auth/index.ts。调用链为 ...（mock）。', { answer: true }],
+        ]
+        let i = 0
+        const timer = setInterval(() => {
+          if (!state.running) {
+            clearInterval(timer)
+            return
+          }
+          if (i >= script.length) {
+            clearInterval(timer)
+            setRunning(false)
+            return
+          }
+          const [k, t, s, raw] = script[i++]
+          addRunStep(k, t, s, raw)
+          if (t === 'final') addMsg('assistant', s, now())
+        }, 480)
+      }
+
+      function escapeHtml(str) {
+        return String(str)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#039;')
+      }
+
+      function setTab(tab) {
+        for (const t of document.querySelectorAll('.tab')) {
+          t.classList.toggle('active', t.dataset.tab === tab)
+        }
+        for (const v of ['chat', 'code', 'runs', 'diff']) {
+          document.querySelector(`#view-${v}`).classList.toggle('hidden', v !== tab)
+        }
+      }
+
+      $('#tabs').addEventListener('click', (e) => {
+        const tab = e.target?.dataset?.tab
+        if (!tab) return
+        setTab(tab)
+      })
+
+      $('#btnToggleCfg').addEventListener('click', () => {
+        state.configured = !state.configured
+        setConfigUI()
+      })
+
+      $('#btnNewChat').addEventListener('click', () => {
+        const id = `c${state.chats.length + 1}`
+        state.chats.unshift({ id, title: 'New Chat', subtitle: '未命名' })
+        state.selectedChatId = id
+        renderChatList()
+        seedThread()
+      })
+
+      $('#btnClear').addEventListener('click', () => {
+        state.runSteps = []
+        state.stepCount = 0
+        state.ctxK = 0
+        setMeters()
+        renderRunLog()
+        $('#prompt').value = ''
+      })
+
+      $('#btnFakeTree').addEventListener('click', () => {
+        $('#fileTree').textContent =
+          'src/\\n  App.tsx\\n  runtime/runtime.ts\\n  tools/searchCodeTool.ts\\nREADME.md\\nsrc-tauri/\\n  src/lib.rs'
+      })
+
+      $('#btnRun').addEventListener('click', () => {
+        const task = $('#prompt').value.trim() || '搜索 auth 并解释入口'
+        simulateRun(task)
+      })
+      $('#btnSend').addEventListener('click', () => {
+        const task = $('#prompt').value.trim() || '帮我总结仓库结构'
+        simulateRun(task)
+      })
+      $('#btnStop').addEventListener('click', () => {
+        setRunning(false)
+        addRunStep('llm', 'stopped', '已停止本次 Run（mock）。', { stopped: true })
+        addMsg('assistant', '已停止。你可以修改任务后重新 Run。', now())
+      })
+
+      $('#btnAttach').addEventListener('click', () => {
+        addMsg('assistant', 'Attach（mock）：未来可选择文件/片段加入上下文。', now())
+      })
+
+      setConfigUI()
+      setMeters()
+      renderChatList()
+      seedThread()
+      setTab('chat')
+    </script>
+  </body>
+</html>
