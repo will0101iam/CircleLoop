@@ -37,6 +37,29 @@ describe('migrations', () => {
     expect(run).toHaveBeenCalledWith('alter table chat_threads add column workspace_path text', [])
   })
 
+
+  it('adds pin metadata columns to legacy chat_threads tables', async () => {
+    const run = vi.fn().mockResolvedValue(undefined)
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce([
+        { name: 'id' },
+        { name: 'title' },
+        { name: 'workspace_path' },
+        { name: 'messages_json' },
+        { name: 'created_at' },
+        { name: 'updated_at' },
+      ])
+      .mockResolvedValueOnce([{ name: 'workspace_path', notnull: 0 }])
+
+    await applyMigrations({
+      run,
+      query,
+    })
+
+    expect(run).toHaveBeenCalledWith('alter table chat_threads add column pinned_at integer', [])
+    expect(run).toHaveBeenCalledWith('alter table chat_threads add column last_activated_at integer', [])
+  })
   it('rebuilds legacy sessions tables whose workspace_path is still not-null', async () => {
     const run = vi.fn().mockResolvedValue(undefined)
     const query = vi

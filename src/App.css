@@ -99,11 +99,13 @@
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
+  scrollbar-width: none;
   padding-right: 2px;
 }
 
 .mira-chat-list::-webkit-scrollbar {
-  width: 4px;
+  width: 0;
+  display: none;
 }
 
 .mira-chat-list::-webkit-scrollbar-track {
@@ -111,17 +113,36 @@
 }
 
 .mira-chat-list::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.mira-chat-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px;
+  color: #000000;
+  padding-right: 2px;
+}
+
+.mira-chat-row:hover,
+.mira-chat-row.selected {
   background: #000000;
-  border-radius: 0;
+  color: #ffffff;
 }
 
 .mira-chat-item {
+  flex: 0 0 28px;
   width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: none;
   border-radius: 0;
   padding: 6px 8px;
   background: transparent;
-  color: #000000;
+  color: inherit;
   text-align: left;
   font-size: 12px;
   cursor: pointer;
@@ -130,16 +151,70 @@
   overflow: hidden;
   text-overflow: ellipsis;
   height: 28px;
+  min-height: 28px;
 }
 
-.mira-chat-item:hover {
+.mira-chat-pin {
+  flex: 0 0 auto;
+}
+
+.mira-chat-more {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+}
+
+.mira-chat-row:hover .mira-chat-more,
+.mira-chat-row.selected .mira-chat-more {
+  opacity: 1;
+}
+
+.mira-chat-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 6px;
+  border: 1px solid #000000;
+  background: #ffffff;
+  z-index: 30;
+  min-width: 140px;
+}
+
+.mira-chat-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: #000000;
+  cursor: pointer;
+  font: 12px/1.2 var(--mono);
+  text-align: left;
+}
+
+.mira-chat-menu-item:hover {
   background: #000000;
   color: #ffffff;
 }
 
+.mira-chat-menu-item.danger:hover {
+  background: #000000;
+  color: #ffffff;
+}
+
+.mira-chat-item:hover,
 .mira-chat-item.selected {
-  background: #000000;
-  color: #ffffff;
+  background: transparent;
+  color: inherit;
 }
 
 .mira-sidebar-footer {
@@ -211,6 +286,7 @@
   justify-content: space-between;
   padding: 20px 34px 12px;
   flex-shrink: 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
 }
 
 .mira-topbar-title {
@@ -227,6 +303,32 @@
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.mira-workspace-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #000000;
+  background: #ffffff;
+  color: #000000;
+  border-radius: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 260px;
+}
+
+.mira-workspace-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mira-workspace-btn:hover {
+  background: #000000;
+  color: #ffffff;
 }
 
 .mira-btn,
@@ -287,8 +389,9 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   /* Leave a safe area so the composer (which sits on top) doesn't cover content. */
-  padding: 0 42px 180px;
+  padding: 20px 42px 180px;
   overscroll-behavior: contain;
   /* Avoid janky "smooth" animation while streaming; we control it in JS when needed. */
   scroll-behavior: auto;
@@ -488,10 +591,162 @@
   letter-spacing: 0.01em;
 }
 
+.mira-msg-actions-bottom {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.mira-msg:hover .mira-msg-actions-bottom,
+.mira-run:hover .mira-msg-actions-bottom {
+  opacity: 1;
+}
+
+.mira-msg-action-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  cursor: pointer;
+  color: #000000;
+  font: 12px/1 var(--mono);
+  text-decoration: none;
+}
+
+.mira-msg-action-icon svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  flex: 0 0 auto;
+}
+
+.mira-round-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: 0 0 auto;
+}
+
+.mira-msg-action-icon:hover {
+  opacity: 1;
+}
+
+.mira-tooltip {
+  position: relative;
+}
+
+.mira-tooltip:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border: 1px solid #000000;
+  background: #ffffff;
+  color: #000000;
+  font: 12px/1.35 var(--mono);
+  max-width: 240px;
+  white-space: nowrap;
+  z-index: 10;
+}
+
 .mira-msg-body {
   font: 14px/1.72 var(--mono);
   color: #000000;
   white-space: pre-wrap;
+}
+
+.mira-assistant-body {
+  white-space: normal;
+  display: grid;
+  gap: 10px;
+}
+
+.mira-assistant-paragraph {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.mira-assistant-list {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+}
+
+.mira-assistant-list li {
+  margin: 0;
+}
+
+.mira-assistant-codeblock {
+  display: grid;
+  gap: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #f8f9fb;
+  overflow: hidden;
+}
+
+.mira-assistant-codeblock-label {
+  font: 12px/1.4 var(--mono);
+  color: #6b7280;
+}
+
+.mira-assistant-codeblock-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #f3f4f6;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.mira-assistant-codeblock-copy {
+  border: none;
+  background: transparent;
+  color: #4b5563;
+  font: 12px/1.4 var(--mono);
+  cursor: pointer;
+  padding: 0;
+}
+
+.mira-assistant-codeblock-copy:hover {
+  color: #111827;
+}
+
+.mira-assistant-codeblock pre {
+  margin: 0;
+  padding: 14px 16px;
+  background: transparent;
+  overflow-x: auto;
+}
+
+.mira-assistant-codeblock code {
+  display: block;
+  padding: 0;
+  margin: 0;
+  font: 13px/1.6 var(--mono);
+  white-space: pre;
+  color: #111827;
+  background: transparent;
+  border-radius: 0;
 }
 
 .mira-answer-segments {
@@ -642,6 +897,73 @@
 .mira-tool-lines {
   display: grid;
   gap: 4px;
+}
+
+.mira-process-steps {
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.mira-process-step {
+  display: grid;
+  gap: 6px;
+  padding: 2px 0 8px 14px;
+  border-left: 1px solid #d8d8d8;
+}
+
+.mira-process-step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mira-process-step-title {
+  color: #000000;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mira-process-step-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 0;
+  border: 1px solid #000000;
+  font: 10px/1.4 var(--mono);
+  text-transform: uppercase;
+}
+
+.mira-process-step-status.running,
+.mira-process-step-status.waiting,
+.mira-process-step-status.approved,
+.mira-process-step-status.denied,
+.mira-process-step-status.done,
+.mira-process-step-status.error {
+  background: #ffffff;
+  color: #000000;
+}
+
+.mira-process-step-meta {
+  color: #4b4b4b;
+  font: 11px/1.45 var(--mono);
+}
+
+.mira-process-step-result {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: #000000;
+  font: 11px/1.45 var(--mono);
+}
+
+.mira-process-step-result-label {
+  font-weight: 700;
+}
+
+.mira-process-step-result-preview {
+  opacity: 1;
 }
 
 .mira-tool-line {

@@ -101,4 +101,27 @@ describe('runMessages', () => {
       { id: 'r1:text:1', kind: 'text', text: '抱歉，document.md 实际上没有创建成功。' },
     ])
   })
+
+  it('does not append duplicate approval markers for the same group after text continues', () => {
+    const initial = appendRunMessages([], createUserMessage('u1', 'task', '10:00'), createPendingRunMessage('r1', '10:00'))
+
+    const withText = appendRunAnswerText(initial, 'r1', '先说明原因。')
+    const withApproval = appendRunAnswerMarker(withText, 'r1', {
+      id: 'seg-approval-1',
+      kind: 'approval',
+      eventId: 'tool-1',
+    })
+    const withMoreText = appendRunAnswerText(withApproval, 'r1', '然后继续补充。')
+    const updated = appendRunAnswerMarker(withMoreText, 'r1', {
+      id: 'seg-approval-2',
+      kind: 'approval',
+      eventId: 'tool-1',
+    })
+
+    expect((updated[1] as Extract<(typeof updated)[number], { kind: 'run' }>).answerSegments).toEqual([
+      { id: 'r1:text:1', kind: 'text', text: '先说明原因。' },
+      { id: 'seg-approval-1', kind: 'approval', eventId: 'tool-1' },
+      { id: 'r1:text:3', kind: 'text', text: '然后继续补充。' },
+    ])
+  })
 })

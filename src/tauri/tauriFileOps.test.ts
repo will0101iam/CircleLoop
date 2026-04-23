@@ -6,8 +6,9 @@ describe('createTauriFileOps', () => {
     const readTextFile = vi.fn().mockResolvedValue('hello')
     const writeTextFile = vi.fn().mockResolvedValue(undefined)
     const readDir = vi.fn().mockResolvedValue([{ name: 'src', children: [] }])
+    const exists = vi.fn().mockResolvedValue(true)
 
-    const ops = await createTauriFileOps({ readTextFile, writeTextFile, readDir })
+    const ops = await createTauriFileOps({ readTextFile, writeTextFile, readDir, exists })
 
     const text = await ops.readTextFile('/tmp/ws/README.md')
     expect(text).toBe('hello')
@@ -18,6 +19,8 @@ describe('createTauriFileOps', () => {
     const entries = await ops.listDir('/tmp/ws')
     expect(entries[0]?.name).toBe('src')
     expect(entries[0]?.isDir).toBe(true)
+
+    await expect(ops.exists('/tmp/ws/test.txt')).resolves.toBe(true)
+    expect(exists).toHaveBeenCalledWith('/tmp/ws/test.txt')
   })
 })
-

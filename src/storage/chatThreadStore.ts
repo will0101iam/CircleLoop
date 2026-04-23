@@ -2,7 +2,13 @@ import type { ThreadMessage } from '../app/runMessages'
 import type { SqliteDatabase } from './sqlite'
 import { applyMigrations } from './migrations'
 
-export type ChatSummaryRecord = { id: string; title: string; workspacePath: string | null }
+export type ChatSummaryRecord = {
+  id: string
+  title: string
+  workspacePath: string | null
+  pinnedAt?: number | null
+  lastActivatedAt?: number
+}
 
 export function createChatThreadStore(deps?: {
   db?: SqliteDatabase
@@ -21,12 +27,27 @@ export function createChatThreadStore(deps?: {
     async loadAll(): Promise<{ chats: ChatSummaryRecord[]; chatMessages: Record<string, ThreadMessage[]> }> {
       await ensureDbReady()
       const rows =
-        (await deps?.db?.query<Array<{ id: string; title: string; workspacePath: string | null; messagesJson: string }>[number]>(
-          'select id, title, workspace_path as workspacePath, messages_json as messagesJson from chat_threads order by updated_at desc',
+        (await deps?.db?.query<
+          Array<{
+            id: string
+            title: string
+            workspacePath: string | null
+            pinnedAt: number | null
+            lastActivatedAt: number | null
+            messagesJson: string
+          }>[number]
+        >(
+          'select id, title, workspace_path as workspacePath, pinned_at as pinnedAt, last_activated_at as lastActivatedAt, messages_json as messagesJson from chat_threads order by updated_at desc',
           [],
         )) ?? []
 
-      const chats = rows.map((row) => ({ id: row.id, title: row.title, workspacePath: row.workspacePath ?? null }))
+      const chats = rows.map((row) => ({
+        id: row.id,
+        title: row.title,
+        workspacePath: row.workspacePath ?? null,
+        pinnedAt: row.pinnedAt ?? null,
+        lastActivatedAt: row.lastActivatedAt ?? undefined,
+      }))
       const chatMessages = Object.fromEntries(
         rows.map((row) => {
           let parsed: ThreadMessage[] = []
@@ -47,9 +68,18 @@ export function createChatThreadStore(deps?: {
       const now = deps.now?.() ?? Date.now()
       const existingRows =
         (await deps.db.query<
-          Array<{ id: string; title: string; workspacePath: string | null; messagesJson: string; createdAt: number; updatedAt: number }>[number]
+          Array<{
+            id: string
+            title: string
+            workspacePath: string | null
+            pinnedAt: number | null
+            lastActivatedAt: number | null
+            messagesJson: string
+            createdAt: number
+            updatedAt: number
+          }>[number]
         >(
-          'select id, title, workspace_path as workspacePath, messages_json as messagesJson, created_at as createdAt, updated_at as updatedAt from chat_threads',
+          'select id, title, workspace_path as workspacePath, pinned_at as pinnedAt, last_activated_at as lastActivatedAt, messages_json as messagesJson, created_at as createdAt, updated_at as updatedAt from chat_threads',
           [],
         )) ?? []
       const existingById = new Map(existingRows.map((row) => [row.id, row]))
@@ -68,12 +98,14 @@ export function createChatThreadStore(deps?: {
           existing &&
           existing.title === chat.title &&
           existing.workspacePath === chat.workspacePath &&
+          (existing.pinnedAt ?? null) === (chat.pinnedAt ?? null) &&
+          (existing.lastActivatedAt ?? null) === (chat.lastActivatedAt ?? null) &&
           existing.messagesJson === messagesJson
         const createdAt = existing?.createdAt ?? now
         const updatedAt = unchanged ? existing.updatedAt : now
         await deps.db.run(
-          'insert or replace into chat_threads (id, title, workspace_path, messages_json, created_at, updated_at) values (?, ?, ?, ?, ?, ?)',
-          [chat.id, chat.title, chat.workspacePath, messagesJson, createdAt, updatedAt],
+          'insert or replace into chat_threads (id, title, workspace_path, pinned_at, last_activated_at, messages_json, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)',
+          [chat.id, chat.title, chat.workspacePath, chat.pinnedAt ?? null, chat.lastActivatedAt ?? null, messagesJson, createdAt, updatedAt],
         )
       }
     },

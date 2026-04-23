@@ -4,14 +4,17 @@ type ReadTextFileFn = (path: string) => Promise<string>
 type WriteTextFileFn = (path: string, content: string) => Promise<void>
 type ReadDirEntry = { name?: string; children?: unknown[] | null }
 type ReadDirFn = (path: string) => Promise<ReadDirEntry[]>
+type ExistsFn = (path: string) => Promise<boolean>
 
 export async function createTauriFileOps(deps?: {
+  exists?: ExistsFn
   readTextFile?: ReadTextFileFn
   writeTextFile?: WriteTextFileFn
   readDir?: ReadDirFn
 }): Promise<FileOps> {
-  if (deps?.readTextFile && deps.writeTextFile && deps.readDir) {
+  if (deps?.exists && deps.readTextFile && deps.writeTextFile && deps.readDir) {
     return {
+      exists: deps.exists,
       readTextFile: deps.readTextFile,
       writeTextFile: deps.writeTextFile,
       async listDir(path: string): Promise<DirEntry[]> {
@@ -34,6 +37,9 @@ export async function createTauriFileOps(deps?: {
   const fs = await import('@tauri-apps/plugin-fs')
 
   return {
+    async exists(path: string): Promise<boolean> {
+      return fs.exists(path)
+    },
     readTextFile: fs.readTextFile,
     async writeTextFile(path: string, content: string): Promise<void> {
       await fs.writeFile(path, new TextEncoder().encode(content))

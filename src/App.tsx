@@ -7,6 +7,7 @@ import { createTauriCommandOps } from './tauri/tauriCommandOps'
 import { createTauriFileOps } from './tauri/tauriFileOps'
 import { createRuntime } from './runtime/runtime'
 import { isTauri } from './tauri/isTauri'
+import { createJournaledFileOps, rollbackEntries, type FileRollbackEntry } from './app/fileRollback'
 import { loadMinimaxConfig, saveMinimaxConfig, type MinimaxConfigStatus } from './config/config'
 import {
   createChatCompletionOpenAICompat,
@@ -17,14 +18,22 @@ import {
 import { runEngine, resumeRunEngineWithApproval, type PendingApprovalState } from './agent/runEngine'
 import { sanitizeThink } from './app/sanitizeThink'
 import { formatToolPayloadPreview } from './app/formatToolPayload'
+import { renderAssistantBlocks } from './app/renderAssistantBlocks'
 import { buildChatContextMessages } from './app/buildChatContext'
 import { buildFallbackSessionTitle, resolveSessionTitleFromPrompt, shouldGenerateSessionTitle } from './app/sessionTitle'
-import { getApprovalStatusText, isApprovalInteractive, type ApprovalUiState } from './app/approvalUiState'
-import { filterRunEventsByLocation, getApprovalEventsByLocation } from './app/runEventAnchors'
+import type { ApprovalUiState } from './app/approvalUiState'
 import { createThinkStreamParser } from './app/thinkStreamParser'
 import { getResumeEventPlacement } from './app/runTimelinePlacement'
 import { isThinkingExpanded } from './app/runUiState'
+import {
+  beginRunFollow,
+  interruptRunFollow,
+  shouldAutoAnchorApproval,
+  shouldAutoFollowRun,
+  shouldTriggerFinalScroll,
+} from './app/threadFollowPolicy'
 import { compressContextWithMinimax, type CompressionSummary, renderCompressionSummaryMessage } from './context/contextCompressor'
+import { Copy, FolderOpen, MoreHorizontal, Pencil, Pin, RotateCcw, Square, Trash2, Undo2 } from 'lucide-react'
 import {
   appendRunMessages,
   appendRunEvent,
@@ -32,8 +41,8 @@ import {
   appendRunAnswerText,
   completeRunMessage,
   createPendingRunMessage,
+  createAssistantMessage,
   createUserMessage,
-  type AnswerSegment,
   type RunEvent,
   type RunThreadMessage,
   type ThreadMessage,
@@ -56,9 +65,55 @@ type PendingApprovalRecord = {
 }
 
 type ApprovalUiStateRecord = Record<string, ApprovalUiState>
+type ApprovalEvent = Extract<RunEvent, { kind: 'approval_requested' | 'approval_resolved' }>
+type ToolExecutionEvent = Extract<RunEvent, { kind: 'tool_execute' | 'tool_result' }>
+type ProcessStepStatusTone = 'running' | 'waiting' | 'approved' | 'denied' | 'done' | 'error'
+type ProcessStepItem = {
+  key: string
+  title: string
+  statusLabel: string
+  statusTone: ProcessStepStatusTone
+  interactive: boolean
+  execute?: Extract<ToolExecutionEvent, { kind: 'tool_execute' }>
+  result?: Extract<ToolExecutionEvent, { kind: 'tool_result' }>
+  approvalRequested?: Extract<ApprovalEvent, { kind: 'approval_requested' }>
+  approvalResolved?: Extract<ApprovalEvent, { kind: 'approval_resolved' }>
+  resultPreview?: string | null
+}
 
 type ChatThreadStoreLike = ReturnType<typeof createChatThreadStore>
-type ChatSummary = { id: string; title: string; workspacePath: string | null }
+type ChatSummary = {
+  id: string
+  title: string
+  workspacePath: string | null
+  pinnedAt?: number | null
+  lastActivatedAt?: number
+}
+
+type TestInitialState = {
+  chats: ChatSummary[]
+  selectedChatId: string
+  chatMessages: Record<string, ThreadMessage[]>
+  disableAutoRuntime?: boolean
+  runningChatId?: string | null
+  activeRunId?: string | null
+  initialFollowState?: {
+    activeRunId: string | null
+    interruptedRunId: string | null
+  }
+}
+
+function BranchIcon(props: { size?: number }) {
+  const size = props.size ?? 12
+  return (
+    <svg width={size} height={size} viewBox="170 42 684 940" aria-hidden="true" fill="none">
+      <path
+        d="M725.333333 42.666667c72.533333 0 128 55.466667 128 128 0 55.466667-34.133333 102.4-85.333333 119.466666V426.666667c0 72.533333-55.466667 128-128 128H341.333333v179.2c51.2 17.066667 85.333333 64 85.333334 119.466666 0 72.533333-55.466667 128-128 128s-128-55.466667-128-128c0-55.466667 34.133333-102.4 85.333333-119.466666V290.133333C204.8 273.066667 170.666667 226.133333 170.666667 170.666667c0-72.533333 55.466667-128 128-128s128 55.466667 128 128c0 55.466667-34.133333 102.4-85.333334 119.466666V469.333333h256c46.933333 0 85.333333-38.4 85.333334-85.333333V290.133333c-51.2-17.066667-85.333333-64-85.333334-119.466666 0-72.533333 55.466667-128 128-128zM298.666667 810.666667c-25.6 0-42.666667 17.066667-42.666667 42.666666s17.066667 42.666667 42.666667 42.666667 42.666667-17.066667 42.666666-42.666667-17.066667-42.666667-42.666666-42.666666zM725.333333 128c-25.6 0-42.666667 17.066667-42.666666 42.666667s17.066667 42.666667 42.666666 42.666666 42.666667-17.066667 42.666667-42.666666-17.066667-42.666667-42.666667-42.666667zM298.666667 128c-25.6 0-42.666667 17.066667-42.666667 42.666667s17.066667 42.666667 42.666667 42.666666 42.666667-17.066667 42.666666-42.666666-17.066667-42.666667-42.666666-42.666667z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
 
 function estimateMessagesChars(messages: OpenAICompatChatMessage[]) {
   return messages.reduce((sum, message) => {
@@ -87,16 +142,23 @@ function chunkMessagesForCompression(messages: OpenAICompatChatMessage[], maxCha
 
 function upsertRecentChat(
   chats: ChatSummary[],
-  input: { id: string; title?: string; workspacePath?: string | null },
+  input: { id: string; title?: string; workspacePath?: string | null; pinnedAt?: number | null; lastActivatedAt?: number },
 ) {
   const existing = chats.find((chat) => chat.id === input.id)
   const title = input.title ?? existing?.title ?? 'New Chat'
   const workspacePath = input.workspacePath === undefined ? (existing?.workspacePath ?? null) : input.workspacePath
+  const pinnedAt = input.pinnedAt === undefined ? (existing?.pinnedAt ?? null) : input.pinnedAt
+  const lastActivatedAt = input.lastActivatedAt ?? existing?.lastActivatedAt ?? Date.now()
   const rest = chats.filter((chat) => chat.id !== input.id)
-  return [{ id: input.id, title, workspacePath }, ...rest]
+  return [{ id: input.id, title, workspacePath, pinnedAt, lastActivatedAt }, ...rest]
 }
 
-function App() {
+function App(props?: { __testInitialState?: TestInitialState }) {
+  const testDisableAutoRuntime = props?.__testInitialState?.disableAutoRuntime === true
+  const activeRunIdRef = useRef<string | null>(
+    props?.__testInitialState?.activeRunId ?? props?.__testInitialState?.initialFollowState?.activeRunId ?? null,
+  )
+  const fileRollbackJournalRef = useRef<Record<string, FileRollbackEntry[]>>({})
   const [prompt, setPrompt] = useState<string>('')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [showModelSettings, setShowModelSettings] = useState(false)
@@ -119,23 +181,34 @@ function App() {
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  const [chats, setChats] = useState<ChatSummary[]>([
-    { id: 'c1', title: 'New Chat', workspacePath: null },
-  ])
-  const [selectedChatId, setSelectedChatId] = useState<string>('c1')
-  const [chatMessages, setChatMessages] = useState<Record<string, ThreadMessage[]>>({
-    c1: [],
-  })
-  const [runningChatId, setRunningChatId] = useState<string | null>(null)
+  const [chats, setChats] = useState<ChatSummary[]>(
+    props?.__testInitialState?.chats ?? [{ id: 'c1', title: 'New Chat', workspacePath: null }],
+  )
+  const [selectedChatId, setSelectedChatId] = useState<string>(props?.__testInitialState?.selectedChatId ?? 'c1')
+  const [chatMessages, setChatMessages] = useState<Record<string, ThreadMessage[]>>(props?.__testInitialState?.chatMessages ?? { c1: [] })
+  const [runningChatId, setRunningChatId] = useState<string | null>(props?.__testInitialState?.runningChatId ?? null)
   const [deepResearchEnabled, setDeepResearchEnabled] = useState(false)
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, PendingApprovalRecord>>({})
   const [approvalUiStates, setApprovalUiStates] = useState<Record<string, ApprovalUiStateRecord>>({})
   const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({})
+  const [openChatMenuId, setOpenChatMenuId] = useState<string | null>(null)
   const threadRef = useRef<HTMLDivElement | null>(null)
   const threadBottomRef = useRef<HTMLDivElement | null>(null)
   const activeAbortControllerRef = useRef<AbortController | null>(null)
+  const messageElementRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const processStepElementRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const pendingScrollMessageIdRef = useRef<string | null>(null)
+  const pendingApprovalAnchorRef = useRef<{ runId: string; stepKey: string } | null>(null)
+  const seenApprovalRequestEventIdsRef = useRef<Record<string, string>>({})
+  const suppressThreadScrollRef = useRef(false)
+  const pendingFinalScrollRef = useRef(false)
+  const followStateRef = useRef<{ activeRunId: string | null; interruptedRunId: string | null }>(
+    props?.__testInitialState?.initialFollowState ?? {
+      activeRunId: props?.__testInitialState?.activeRunId ?? null,
+      interruptedRunId: null,
+    },
+  )
 
-  const configured = configStatus.configured
   const configPath = configStatus.configPath ?? '$APPCONFIG/circleloop/config.json'
 
   function toReadableRunError(error: unknown) {
@@ -164,7 +237,12 @@ function App() {
 
   async function buildRuntimeForWorkspace(nextWorkspacePath: string | null) {
     if (!isTauri()) return null
-    const fileOps = await createTauriFileOps()
+    const baseFileOps = await createTauriFileOps()
+    const fileOps = createJournaledFileOps({
+      base: baseFileOps,
+      getActiveRunId: () => activeRunIdRef.current,
+      journal: fileRollbackJournalRef.current,
+    })
     const commandOps = await createTauriCommandOps()
     return createRuntime({ workspacePath: nextWorkspacePath ?? undefined, fileOps, commandOps })
   }
@@ -236,12 +314,423 @@ function App() {
 
   const selectedChat = useMemo(() => chats.find((chat) => chat.id === selectedChatId) ?? null, [chats, selectedChatId])
   const selectedWorkspacePath = selectedChat?.workspacePath ?? null
-  const formattedWorkspace = selectedWorkspacePath ?? '未绑定'
-  const workspaceTooltip = selectedWorkspacePath ?? '当前尚未选择工作区'
+  const formattedWorkspace = (() => {
+    if (!selectedWorkspacePath) return '选择工作区'
+    const parts = selectedWorkspacePath.split(/[\\/]/).filter(Boolean)
+    return parts.at(-1) ?? selectedWorkspacePath
+  })()
   const selectedThread = useMemo(() => chatMessages[selectedChatId] ?? [], [chatMessages, selectedChatId])
+  const isRunningCurrentChat = runningChatId === selectedChatId
+  const sortedChats = useMemo(() => {
+    const pinned = chats
+      .filter((chat) => Boolean(chat.pinnedAt))
+      .sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0))
+    const normal = chats
+      .filter((chat) => !chat.pinnedAt)
+      .sort((a, b) => (b.lastActivatedAt ?? 0) - (a.lastActivatedAt ?? 0))
+    return [...pinned, ...normal]
+  }, [chats])
+
+  async function copyToClipboard(text: string) {
+    const trimmed = text ?? ''
+    if (!trimmed) return
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(trimmed)
+        return
+      }
+    } catch {
+      // Fall through to legacy copy path.
+    }
+    const el = document.createElement('textarea')
+    el.value = trimmed
+    el.style.position = 'fixed'
+    el.style.top = '-9999px'
+    el.style.left = '-9999px'
+    document.body.appendChild(el)
+    el.focus()
+    el.select()
+    document.execCommand('copy')
+    document.body.removeChild(el)
+  }
+
+  function findLastUserRunPair(thread: ThreadMessage[]) {
+    for (let i = thread.length - 2; i >= 0; i -= 1) {
+      const user = thread[i]
+      const run = thread[i + 1]
+      if (user?.kind === 'user' && run?.kind === 'run') {
+        return { userIndex: i, runIndex: i + 1, user, run }
+      }
+    }
+    return null
+  }
+
+  async function handleUndoUser(userId: string) {
+    const pair = findLastUserRunPair(selectedThread)
+    if (!pair) return
+    if (pair.user.id !== userId) return
+    activeAbortControllerRef.current?.abort()
+    if (!testDisableAutoRuntime) {
+      try {
+        const baseFileOps = await createTauriFileOps()
+        const entries = fileRollbackJournalRef.current[pair.run.id] ?? []
+        await rollbackEntries({ base: baseFileOps, entries })
+        delete fileRollbackJournalRef.current[pair.run.id]
+      } catch {
+        // Keep undo best-effort and continue removing the pair.
+      }
+    }
+    setPrompt(pair.user.text)
+    setChatMessages((prev) => {
+      const nextThread = [...(prev[selectedChatId] ?? [])]
+      nextThread.splice(pair.userIndex, 2)
+      return { ...prev, [selectedChatId]: nextThread }
+    })
+  }
+
+  async function handleRetryRun(runId: string) {
+    const pair = findLastUserRunPair(selectedThread)
+    if (!pair) return
+    if (pair.run.id !== runId) return
+    const userText = pair.user.text
+    const threadBeforeUser = selectedThread.slice(0, pair.userIndex)
+
+    activeAbortControllerRef.current?.abort()
+    const newRunId = `r_${Math.random().toString(16).slice(2)}`
+    const nextMode = deepResearchEnabled ? 'deep_research' : 'normal'
+    const newRun = createPendingRunMessage(newRunId, now(), nextMode)
+    fileRollbackJournalRef.current[newRunId] = []
+    pendingScrollMessageIdRef.current = pair.user.id
+    followStateRef.current = beginRunFollow(newRunId)
+
+    // Replace run in-place first so UI updates immediately.
+    setChatMessages((prev) => {
+      const nextThread = [...(prev[selectedChatId] ?? [])]
+      nextThread[pair.runIndex] = newRun
+      return { ...prev, [selectedChatId]: nextThread }
+    })
+
+    if (testDisableAutoRuntime) return
+
+    setErrorMessage(null)
+    setRunningChatId(selectedChatId)
+    activeRunIdRef.current = newRunId
+    const latestConfig = await refreshConfigStatus()
+    if (!latestConfig.configured) {
+      setChatMessages((prev) => ({
+        ...prev,
+        [selectedChatId]: completeRunMessage(prev[selectedChatId] ?? [], newRunId, {
+          status: 'error',
+          finalText: `MiniMax 未配置：请编辑 ${configPath} 后重试。`,
+        }),
+      }))
+      setRunningChatId(null)
+      return
+    }
+
+    let activeRuntime = runtime
+    if (!activeRuntime) {
+      activeRuntime = await buildRuntimeForWorkspace(selectedWorkspacePath)
+      if (activeRuntime) setRuntime(activeRuntime)
+    }
+    if (!activeRuntime) {
+      setChatMessages((prev) => ({
+        ...prev,
+        [selectedChatId]: completeRunMessage(prev[selectedChatId] ?? [], newRunId, {
+          status: 'error',
+          finalText: '当前无法初始化运行时：请在桌面端打开应用后重试。',
+        }),
+      }))
+      setRunningChatId(null)
+      return
+    }
+
+    const apiKey = latestConfig.getApiKey()
+    if (!apiKey) {
+      setChatMessages((prev) => ({
+        ...prev,
+        [selectedChatId]: completeRunMessage(prev[selectedChatId] ?? [], newRunId, {
+          status: 'error',
+          finalText: `读取配置失败：请检查 ${configPath} 的 baseUrl/apiKey/model。`,
+        }),
+      }))
+      setRunningChatId(null)
+      return
+    }
+
+    const abortController = new AbortController()
+    activeAbortControllerRef.current = abortController
+    const streamParser = createThinkStreamParser()
+    let sawAnyDelta = false
+    let hasAnswerStarted = false
+    let toolEventCount = 0
+    let lastAnswerSnapshot = ''
+
+    const patchRunMessage = (
+      patch: Partial<Pick<RunThreadMessage, 'status' | 'thinkText' | 'events' | 'finalText' | 'mode' | 'answerSegments'>>,
+    ) => {
+      setChatMessages((prev) => ({
+        ...prev,
+        [selectedChatId]: completeRunMessage(prev[selectedChatId] ?? [], newRunId, patch),
+      }))
+    }
+
+    const appendEventToRunMessage = (event: RunEvent) => {
+      setChatMessages((prev) => ({
+        ...prev,
+        [selectedChatId]: appendRunEvent(prev[selectedChatId] ?? [], newRunId, event),
+      }))
+    }
+
+    const syncStreamText = () => {
+      const thinkingText = streamParser.getThinkingText()
+      const answerText = streamParser.getAnswerText()
+      if (!hasAnswerStarted && answerText.trim().length > 0) {
+        hasAnswerStarted = true
+      }
+      const compactAnswerText = answerText.replace(/\n{3,}/g, '\n\n')
+      const deltaText = compactAnswerText.slice(lastAnswerSnapshot.length)
+      if (nextMode === 'normal' && deltaText) {
+        setChatMessages((prev) => ({
+          ...prev,
+          [selectedChatId]: appendRunAnswerText(prev[selectedChatId] ?? [], newRunId, deltaText),
+        }))
+      }
+      lastAnswerSnapshot = compactAnswerText
+      patchRunMessage({
+        thinkText: thinkingText.trim() || null,
+        finalText: compactAnswerText.trim() || null,
+      })
+    }
+
+    const openAiChatCompletion = async (args: { messages: OpenAICompatChatMessage[]; tools?: OpenAICompatTool[] }) => {
+      return createChatCompletionOpenAICompat({
+        baseUrl: latestConfig.baseUrl ?? 'https://api.minimaxi.com/v1',
+        apiKey,
+        model: latestConfig.model ?? 'MiniMax-M2.7',
+        messages: args.messages,
+        tools: args.tools,
+        tool_choice: 'auto',
+        temperature: 0.2,
+        signal: abortController.signal,
+      })
+    }
+
+    const openAiChatCompletionStream = async (args: { messages: OpenAICompatChatMessage[]; tools?: OpenAICompatTool[]; onContentDelta?: (delta: string) => void }) => {
+      return createChatCompletionStreamOpenAICompat({
+        baseUrl: latestConfig.baseUrl ?? 'https://api.minimaxi.com/v1',
+        apiKey,
+        model: latestConfig.model ?? 'MiniMax-M2.7',
+        messages: args.messages,
+        tools: args.tools,
+        tool_choice: 'auto',
+        temperature: 0.2,
+        signal: abortController.signal,
+        onContentDelta: (delta) => {
+          sawAnyDelta = true
+          streamParser.pushDelta(delta)
+          syncStreamText()
+          args.onContentDelta?.(delta)
+        },
+      })
+    }
+
+    try {
+      const modelCharBudget = getUsableContextCharBudget(latestConfig.model)
+      const contextMessages = buildChatContextMessages({
+        systemMessage: { role: 'system', content: SYSTEM_PROMPT },
+        thread: threadBeforeUser,
+        newUserText: userText,
+        maxContextChars: modelCharBudget,
+      })
+
+      const result = await runEngine({
+        messages: contextMessages,
+        tools: activeRuntime.tools,
+        chatCompletion: ({ messages, tools }) => openAiChatCompletion({ messages, tools }),
+        chatCompletionStream: ({ messages, tools, onContentDelta }) =>
+          openAiChatCompletionStream({ messages, tools, onContentDelta }),
+        workspacePath: selectedWorkspacePath ?? undefined,
+        onTimelineEvent: (event) => {
+          if (event.type === 'tool_execute') {
+            toolEventCount += 1
+            const phase = hasAnswerStarted ? 'answer' : 'thinking'
+            appendEventToRunMessage({
+              id: `${newRunId}:retry:tool-exec:${toolEventCount}`,
+              kind: 'tool_execute',
+              phase,
+              name: event.tool_call.function.name,
+              args: event.args,
+              anchor: nextMode === 'deep_research' ? 'thinking' : phase,
+              groupId: event.tool_call.id,
+            })
+            if (nextMode === 'normal' && phase === 'answer') {
+              setChatMessages((prev) => ({
+                ...prev,
+                [selectedChatId]: appendRunAnswerMarker(prev[selectedChatId] ?? [], newRunId, {
+                  id: `${newRunId}:retry:answer-tool:${toolEventCount}`,
+                  kind: 'tool',
+                  eventId: event.tool_call.id,
+                }),
+              }))
+            }
+          } else if (event.type === 'tool_result') {
+            toolEventCount += 1
+            const phase = hasAnswerStarted ? 'answer' : 'thinking'
+            appendEventToRunMessage({
+              id: `${newRunId}:retry:tool-result:${toolEventCount}`,
+              kind: 'tool_result',
+              phase,
+              name: event.name,
+              ok: event.result.ok,
+              payload: event.result,
+              anchor: nextMode === 'deep_research' ? 'thinking' : phase,
+              groupId: event.tool_call_id,
+            })
+          } else if (event.type === 'approval_requested') {
+            toolEventCount += 1
+            const phase = hasAnswerStarted ? 'answer' : 'thinking'
+            appendEventToRunMessage({
+              id: `${newRunId}:retry:approval-requested:${toolEventCount}`,
+              kind: 'approval_requested',
+              phase,
+              name: event.tool_call.function.name,
+              summary: event.summary,
+              reason: event.reason,
+              anchor: nextMode === 'deep_research' ? 'thinking' : phase,
+              groupId: event.tool_call.id,
+            })
+          } else if (event.type === 'approval_resolved') {
+            toolEventCount += 1
+            const phase = hasAnswerStarted ? 'answer' : 'thinking'
+            appendEventToRunMessage({
+              id: `${newRunId}:retry:approval-resolved:${toolEventCount}`,
+              kind: 'approval_resolved',
+              phase,
+              name: 'approval',
+              approved: event.approved,
+              anchor: nextMode === 'deep_research' ? 'thinking' : phase,
+              groupId: event.tool_call_id,
+            })
+          }
+        },
+        maxTurns: 12,
+      })
+
+      if ('content' in result) {
+        if (!sawAnyDelta) {
+          streamParser.pushDelta(result.content)
+          syncStreamText()
+        }
+        const sanitized = sanitizeThink(result.content)
+        patchRunMessage({
+          status: 'completed',
+          thinkText: streamParser.getThinkingText().trim() || sanitized.thinkText,
+          finalText: streamParser.getAnswerText().replace(/\n{3,}/g, '\n\n').trim() || sanitized.visibleText,
+        })
+      } else if (result.error.code === 'APPROVAL_REQUIRED' && 'pendingApproval' in result) {
+        patchRunMessage({ status: 'waiting_approval' })
+        setPendingApprovals((prev) => ({
+          ...prev,
+          [newRunId]: {
+            chatId: selectedChatId,
+            runId: newRunId,
+            approval: result.pendingApproval,
+            config: {
+              baseUrl: latestConfig.baseUrl ?? 'https://api.minimaxi.com/v1',
+              model: latestConfig.model ?? 'MiniMax-M2.7',
+              apiKey,
+            },
+          },
+        }))
+      } else {
+        patchRunMessage({ status: 'error', finalText: result.error.message })
+      }
+    } catch (error) {
+      const message = toReadableRunError(error)
+      patchRunMessage({ status: 'error', finalText: message })
+      setErrorMessage(message)
+    } finally {
+      activeRunIdRef.current = null
+      activeAbortControllerRef.current = null
+      setRunningChatId(null)
+    }
+  }
+
+  function handleBranchToNewChat() {
+    const sourceThread = selectedThread
+    const exported: ThreadMessage[] = []
+    for (const msg of sourceThread) {
+      if (msg.kind === 'user') {
+        exported.push(createUserMessage(`u_${Math.random().toString(16).slice(2)}`, msg.text, now()))
+      } else if (msg.kind === 'assistant') {
+        exported.push(createAssistantMessage(`a_${Math.random().toString(16).slice(2)}`, msg.text, now()))
+      } else if (msg.kind === 'run') {
+        const visibleFinalText = getVisibleAssistantText(msg.finalText)
+        if (visibleFinalText.trim()) {
+          exported.push(createAssistantMessage(`a_${Math.random().toString(16).slice(2)}`, visibleFinalText, now()))
+        }
+      }
+    }
+
+    const id = `c_${Math.random().toString(16).slice(2)}`
+    setChats((prev) => [{ id, title: 'Branched Chat', workspacePath: selectedWorkspacePath, lastActivatedAt: Date.now() }, ...prev])
+    setSelectedChatId(id)
+    setChatMessages((prev) => ({ ...prev, [id]: exported }))
+  }
+
+  function handleTogglePin(chatId: string) {
+    const nowTs = Date.now()
+    setChats((prev) =>
+      prev.map((chat) => {
+        if (chat.id !== chatId) return chat
+        if (chat.pinnedAt) {
+          return { ...chat, pinnedAt: null, lastActivatedAt: nowTs }
+        }
+        return { ...chat, pinnedAt: nowTs }
+      }),
+    )
+    setOpenChatMenuId(null)
+  }
+
+  function activateChat(chatId: string) {
+    setSelectedChatId(chatId)
+  }
+
+  function handleRenameChat(chatId: string) {
+    const current = chats.find((chat) => chat.id === chatId)
+    const nextTitle = window.prompt('重命名会话', current?.title ?? 'New Chat')
+    if (!nextTitle || !nextTitle.trim()) {
+      setOpenChatMenuId(null)
+      return
+    }
+    setChats((prev) => prev.map((chat) => (chat.id === chatId ? { ...chat, title: nextTitle.trim() } : chat)))
+    setOpenChatMenuId(null)
+  }
+
+  function handleDeleteChat(chatId: string) {
+    const rest = chats.filter((chat) => chat.id !== chatId)
+    const fallbackChat = { id: newId(), title: 'New Chat', workspacePath: null, pinned: false }
+    const normalizedFallbackChat = { id: fallbackChat.id, title: fallbackChat.title, workspacePath: fallbackChat.workspacePath, pinnedAt: null, lastActivatedAt: Date.now() }
+    const nextChats = rest.length > 0 ? rest : [normalizedFallbackChat]
+    const nextSelectedId = selectedChatId === chatId ? nextChats[0]!.id : selectedChatId
+    setChats(nextChats)
+    setChatMessages((prev) => {
+      const next = { ...prev }
+      delete next[chatId]
+      if (rest.length === 0) next[normalizedFallbackChat.id] = []
+      return next
+    })
+    setSelectedChatId(nextSelectedId)
+    setOpenChatMenuId(null)
+  }
 
   useEffect(() => {
     let cancelled = false
+    if (testDisableAutoRuntime) {
+      setRuntime(null)
+      return
+    }
     if (!isTauri()) {
       setRuntime(null)
       return
@@ -265,34 +754,83 @@ function App() {
   }, [chatStore, chatStoreHydrated, chats, chatMessages])
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const threadEl = threadRef.current
+    for (const message of selectedThread) {
+      if (message.kind !== 'run') continue
+      const latestApproval = [...message.events].reverse().find((event) => event.kind === 'approval_requested')
+      if (!latestApproval) continue
+      if (seenApprovalRequestEventIdsRef.current[message.id] === latestApproval.id) continue
+      seenApprovalRequestEventIdsRef.current[message.id] = latestApproval.id
+      if (!shouldAutoAnchorApproval(followStateRef.current, message.id)) continue
+      pendingApprovalAnchorRef.current = {
+        runId: message.id,
+        stepKey: latestApproval.groupId ?? latestApproval.id,
+      }
+    }
+  }, [selectedThread])
 
-      if (runningChatId === selectedChatId) {
-        if (threadEl && typeof threadEl.scrollTo === 'function') {
-          threadEl.scrollTo({ top: threadEl.scrollHeight, behavior: 'auto' })
-        } else if (typeof threadBottomRef.current?.scrollIntoView === 'function') {
-          threadBottomRef.current.scrollIntoView({ behavior: 'auto', block: 'end' })
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const threadEl = threadRef.current
+      const pendingScrollMessageId = pendingScrollMessageIdRef.current
+
+      function performThreadScroll(top: number, behavior: ScrollBehavior) {
+        if (!threadEl || typeof threadEl.scrollTo !== 'function') return
+        suppressThreadScrollRef.current = true
+        threadEl.scrollTo({ top: Math.max(0, top), behavior })
+        requestAnimationFrame(() => {
+          suppressThreadScrollRef.current = false
+        })
+      }
+
+      const pendingApprovalAnchor = pendingApprovalAnchorRef.current
+      if (pendingApprovalAnchor) {
+        const targetEl = processStepElementRefs.current[`${pendingApprovalAnchor.runId}:${pendingApprovalAnchor.stepKey}`]
+        if (threadEl && targetEl) {
+          pendingApprovalAnchorRef.current = null
+          const threadRect = threadEl.getBoundingClientRect()
+          const targetRect = targetEl.getBoundingClientRect()
+          const targetTop = threadEl.scrollTop + (targetRect.top - threadRect.top) - 12
+          performThreadScroll(targetTop, 'auto')
+          return
         }
-        return
+      }
+
+      if (pendingScrollMessageId) {
+        const targetEl = messageElementRefs.current[pendingScrollMessageId]
+        pendingScrollMessageIdRef.current = null
+        if (threadEl && targetEl) {
+          const threadRect = threadEl.getBoundingClientRect()
+          const targetRect = targetEl.getBoundingClientRect()
+          const targetTop = threadEl.scrollTop + (targetRect.top - threadRect.top) - 12
+          performThreadScroll(targetTop, 'auto')
+          return
+        }
       }
 
       const isNearBottom = (() => {
         if (!threadEl) return true
-        if (typeof threadEl.scrollTo !== 'function') return true
         const distance = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight
         return distance < 140
       })()
 
+      // While streaming, only auto-follow if the user is already near the bottom.
+      if (runningChatId === selectedChatId) {
+        if (!shouldAutoFollowRun(followStateRef.current, activeRunIdRef.current)) return
+        if (threadEl) performThreadScroll(threadEl.scrollHeight, 'auto')
+        return
+      }
+
+      if (pendingFinalScrollRef.current) {
+        pendingFinalScrollRef.current = false
+        if (threadEl) performThreadScroll(threadEl.scrollHeight, 'auto')
+        return
+      }
+
       if (!isNearBottom) return
 
-      if (threadEl && typeof threadEl.scrollTo === 'function') {
-        threadEl.scrollTo({ top: threadEl.scrollHeight, behavior: 'smooth' })
-      } else if (typeof threadBottomRef.current?.scrollIntoView === 'function') {
-        threadBottomRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
-      }
-    }, 50)
-    return () => clearTimeout(timer)
+      if (threadEl) performThreadScroll(threadEl.scrollHeight, 'smooth')
+    })
+    return () => cancelAnimationFrame(raf)
   }, [selectedThread, runningChatId, selectedChatId])
 
   async function handlePickWorkspace(chatId = selectedChatId) {
@@ -379,13 +917,17 @@ function App() {
     if (!task) return
     const currentChatTitle = chats.find((chat) => chat.id === selectedChatId)?.title ?? 'New Chat'
     const existingUserMessageCount = selectedThread.filter((message) => message.kind === 'user').length
+    const runId = newId()
+    const runMode = deepResearchEnabled ? 'deep_research' : 'normal'
+    fileRollbackJournalRef.current[runId] = []
     setPrompt('')
     setErrorMessage(null)
     setRunningChatId(selectedChatId)
+    activeRunIdRef.current = runId
     const latestConfig = await refreshConfigStatus()
     const userMessage = createUserMessage(newId(), task, now())
-    const runId = newId()
-    const runMode = deepResearchEnabled ? 'deep_research' : 'normal'
+    pendingScrollMessageIdRef.current = userMessage.id
+    followStateRef.current = beginRunFollow(runId)
     setChats((prev) => upsertRecentChat(prev, { id: selectedChatId }))
     setChatMessages((prev) => ({
       ...prev,
@@ -443,6 +985,7 @@ function App() {
     activeAbortControllerRef.current = abortController
     const streamParser = createThinkStreamParser()
     let sawAnyDelta = false
+    let finalScrollStatus: 'completed' | 'error' | 'waiting_approval' | 'pending' = 'pending'
     let hasAnswerStarted = false
     let toolEventCount = 0
     let lastAnswerSnapshot = ''
@@ -674,7 +1217,7 @@ function App() {
               anchor: runMode === 'deep_research' ? 'thinking' : phase,
               groupId: event.tool_call.id,
             })
-            if (runMode === 'normal' && phase === 'answer') {
+            if (runMode === 'normal') {
               setChatMessages((prev) => ({
                 ...prev,
                 [selectedChatId]: appendRunAnswerMarker(prev[selectedChatId] ?? [], runId, {
@@ -702,6 +1245,7 @@ function App() {
       })
 
       if ('content' in result) {
+        finalScrollStatus = 'completed'
         // If the backend didn't stream (or stream was disabled), parse once at the end.
         if (!sawAnyDelta) {
           streamParser.pushDelta(result.content)
@@ -715,6 +1259,7 @@ function App() {
           finalText: streamParser.getAnswerText().replace(/\n{3,}/g, '\n\n').trim() || sanitized.visibleText,
         })
       } else if (result.error.code === 'APPROVAL_REQUIRED' && 'pendingApproval' in result) {
+        finalScrollStatus = 'waiting_approval'
         patchRunMessage({ status: 'waiting_approval' })
         setPendingApprovals((prev) => ({
           ...prev,
@@ -730,16 +1275,24 @@ function App() {
           },
         }))
       } else {
+        finalScrollStatus = 'error'
         patchRunMessage({
           status: 'error',
           finalText: result.error.message,
         })
       }
     } catch (error) {
+      finalScrollStatus = 'error'
       const message = toReadableRunError(error)
       patchRunMessage({ status: 'error', finalText: message })
       setErrorMessage(message)
     } finally {
+      pendingFinalScrollRef.current = shouldTriggerFinalScroll({
+        state: followStateRef.current,
+        runId: activeRunIdRef.current,
+        status: finalScrollStatus,
+      })
+      activeRunIdRef.current = null
       activeAbortControllerRef.current = null
       setRunningChatId(null)
     }
@@ -765,6 +1318,7 @@ function App() {
 
     setErrorMessage(null)
     setRunningChatId(pending.chatId)
+    activeRunIdRef.current = runId
     setApprovalUiState(runId, pending.approval.toolCall.id, approved ? { status: 'resolving_approved' } : { status: 'resolving_denied' })
     const abortController = new AbortController()
     activeAbortControllerRef.current = abortController
@@ -772,6 +1326,7 @@ function App() {
     let toolEventCount = 0
     let lastAnswerSnapshot = ''
     let effectiveApproved = approved
+    let finalScrollStatus: 'completed' | 'error' | 'waiting_approval' | 'pending' = 'pending'
 
     const patchRunMessage = (
       patch: Partial<Pick<RunThreadMessage, 'status' | 'thinkText' | 'events' | 'finalText' | 'mode' | 'answerSegments'>>,
@@ -963,13 +1518,19 @@ function App() {
       })
 
       if ('content' in result) {
+        finalScrollStatus = 'completed'
         if (!lastAnswerSnapshot) {
           streamParser.pushDelta(result.content)
           syncResumeStreamText()
         }
         setApprovalUiState(runId, pending.approval.toolCall.id, effectiveApproved ? { status: 'resolved_approved' } : { status: 'resolved_denied' })
-        patchRunMessage({ status: 'completed', finalText: result.content })
+        const sanitized = sanitizeThink(result.content)
+        patchRunMessage({
+          status: 'completed',
+          finalText: streamParser.getAnswerText().replace(/\n{3,}/g, '\n\n').trim() || sanitized.visibleText,
+        })
       } else if (result.error.code === 'APPROVAL_REQUIRED' && 'pendingApproval' in result) {
+        finalScrollStatus = 'waiting_approval'
         patchRunMessage({ status: 'waiting_approval' })
         setPendingApprovals((prev) => ({
           ...prev,
@@ -980,15 +1541,23 @@ function App() {
         }))
         setApprovalUiState(runId, result.pendingApproval.toolCall.id, { status: 'pending' })
       } else {
+        finalScrollStatus = 'error'
         setApprovalUiState(runId, pending.approval.toolCall.id, effectiveApproved ? { status: 'resolved_approved' } : { status: 'resolved_denied' })
         patchRunMessage({ status: 'error', finalText: result.error.message })
       }
     } catch (error) {
+      finalScrollStatus = 'error'
       const message = toReadableRunError(error)
       setApprovalUiState(runId, pending.approval.toolCall.id, effectiveApproved ? { status: 'resolved_approved' } : { status: 'resolved_denied' })
       patchRunMessage({ status: 'error', finalText: message })
       setErrorMessage(message)
     } finally {
+      pendingFinalScrollRef.current = shouldTriggerFinalScroll({
+        state: followStateRef.current,
+        runId: activeRunIdRef.current,
+        status: finalScrollStatus,
+      })
+      activeRunIdRef.current = null
       activeAbortControllerRef.current = null
       setRunningChatId(null)
     }
@@ -1024,7 +1593,7 @@ function App() {
 
   function handleNewChat() {
     const id = newId()
-    setChats((prev) => [{ id, title: 'New Chat', workspacePath: null }, ...prev])
+    setChats((prev) => [{ id, title: 'New Chat', workspacePath: null, pinnedAt: null, lastActivatedAt: Date.now() }, ...prev])
     setSelectedChatId(id)
     setChatMessages((prev) => ({
       ...prev,
@@ -1032,206 +1601,180 @@ function App() {
     }))
   }
 
-  function buildToolDetailsItems(events: RunEvent[]) {
+  function formatToolStepTitle(name: string, payload?: unknown) {
+    const record = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null
+    const path = typeof record?.path === 'string' ? record.path : null
+    if (name === 'write_file' && path) return `正在写入 ${path}`
+    if (name === 'read_file' && path) return `正在读取 ${path}`
+    if (name === 'list_dir') return path ? `正在查看 ${path}` : '正在查看目录'
+    if (name === 'search_code') return '正在搜索工作区'
+    if (name === 'execute_command') return '正在运行命令'
+    return name.replace(/_/g, ' ')
+  }
+
+  function getProcessStepTitle(input: {
+    execute?: Extract<ToolExecutionEvent, { kind: 'tool_execute' }>
+    approvalRequested?: Extract<ApprovalEvent, { kind: 'approval_requested' }>
+    result?: Extract<ToolExecutionEvent, { kind: 'tool_result' }>
+  }) {
+    const summary = input.approvalRequested?.summary?.trim()
+    if (summary && /workspace/i.test(summary)) return '正在确认工作区'
+    if (input.execute) return formatToolStepTitle(input.execute.name, input.execute.args)
+    if (summary) return summary
+    if (input.result) return formatToolStepTitle(input.result.name)
+    return 'Step'
+  }
+
+  function getProcessStepState(input: {
+    uiState?: ApprovalUiState
+    approvalRequested?: Extract<ApprovalEvent, { kind: 'approval_requested' }>
+    approvalResolved?: Extract<ApprovalEvent, { kind: 'approval_resolved' }>
+    result?: Extract<ToolExecutionEvent, { kind: 'tool_result' }>
+  }): { label: string; tone: ProcessStepStatusTone; interactive: boolean } {
+    if (input.result) {
+      return input.result.ok
+        ? { label: 'Done', tone: 'done', interactive: false }
+        : { label: 'Error', tone: 'error', interactive: false }
+    }
+    if (input.uiState) {
+      switch (input.uiState.status) {
+        case 'pending':
+          return { label: 'Waiting for approval', tone: 'waiting', interactive: true }
+        case 'resolving_approved':
+          return { label: 'Approved, continuing...', tone: 'approved', interactive: false }
+        case 'resolving_denied':
+          return { label: 'Denied, continuing...', tone: 'denied', interactive: false }
+        case 'resolved_approved':
+          return { label: 'Approved', tone: 'approved', interactive: false }
+        case 'resolved_denied':
+          return { label: 'Denied', tone: 'denied', interactive: false }
+      }
+    }
+    if (input.approvalResolved) {
+      return input.approvalResolved.approved
+        ? { label: 'Approved', tone: 'approved', interactive: false }
+        : { label: 'Denied', tone: 'denied', interactive: false }
+    }
+    if (input.approvalRequested) return { label: 'Waiting for approval', tone: 'waiting', interactive: true }
+    return { label: 'Running', tone: 'running', interactive: false }
+  }
+
+  function buildProcessStepItems(runId: string, events: RunEvent[]) {
     const items: Array<{
       key: string
-      name: string
-      anchor: 'thinking' | 'answer'
-      phase: 'thinking' | 'answer'
-      executeArgs?: unknown
-      resultOk?: boolean
-      resultPayload?: unknown
+      firstSeenIndex: number
+      execute?: Extract<ToolExecutionEvent, { kind: 'tool_execute' }>
+      result?: Extract<ToolExecutionEvent, { kind: 'tool_result' }>
+      approvalRequested?: Extract<ApprovalEvent, { kind: 'approval_requested' }>
+      approvalResolved?: Extract<ApprovalEvent, { kind: 'approval_resolved' }>
     }> = []
     const byGroup = new Map<string, (typeof items)[number]>()
 
-    for (const event of events) {
-      if (event.kind !== 'tool_execute' && event.kind !== 'tool_result') continue
-      const key = event.groupId ?? event.id
-      const current =
-        byGroup.get(key) ??
-        {
-          key,
-          name: event.name,
-          anchor: event.anchor ?? event.phase,
-          phase: event.phase,
-        }
-
-      if (event.kind === 'tool_execute') current.executeArgs = event.args
-      if (event.kind === 'tool_result') {
-        current.resultOk = event.ok
-        current.resultPayload = event.payload
+    for (const [index, event] of events.entries()) {
+      if (
+        event.kind !== 'tool_execute' &&
+        event.kind !== 'tool_result' &&
+        event.kind !== 'approval_requested' &&
+        event.kind !== 'approval_resolved'
+      ) {
+        continue
       }
 
-      if (!byGroup.has(key)) {
+      const key = event.groupId ?? event.id
+      let current = byGroup.get(key)
+      if (!current) {
+        current = { key, firstSeenIndex: index }
         byGroup.set(key, current)
         items.push(current)
       }
+
+      if (event.kind === 'tool_execute') current.execute = event
+      if (event.kind === 'tool_result') current.result = event
+      if (event.kind === 'approval_requested') current.approvalRequested = event
+      if (event.kind === 'approval_resolved') current.approvalResolved = event
     }
 
     return items
+      .sort((a, b) => a.firstSeenIndex - b.firstSeenIndex)
+      .map((item): ProcessStepItem => {
+        const uiState =
+          approvalUiStates[runId]?.[item.key] ??
+          (item.approvalResolved
+            ? { status: item.approvalResolved.approved ? 'resolved_approved' : 'resolved_denied' }
+            : item.approvalRequested
+              ? { status: 'pending' }
+              : undefined)
+        const state = getProcessStepState({
+          uiState,
+          approvalRequested: item.approvalRequested,
+          approvalResolved: item.approvalResolved,
+          result: item.result,
+        })
+        const resultPreview = item.result
+          ? formatToolPayloadPreview(item.result.payload, { maxPreviewChars: 280 }).previewText.replace(/\s+/g, ' ').trim()
+          : null
+        return {
+          key: item.key,
+          title: getProcessStepTitle({
+            execute: item.execute,
+            approvalRequested: item.approvalRequested,
+            result: item.result,
+          }),
+          statusLabel: state.label,
+          statusTone: state.tone,
+          interactive: state.interactive && Boolean(item.approvalRequested),
+          execute: item.execute,
+          result: item.result,
+          approvalRequested: item.approvalRequested,
+          approvalResolved: item.approvalResolved,
+          resultPreview,
+        }
+      })
   }
 
-  function renderToolDetails(
-    runId: string,
-    events: RunEvent[],
-    location: 'thinking' | 'answer',
-  ) {
-    const items = buildToolDetailsItems(
-      filterRunEventsByLocation(events, location).filter((event) => event.kind === 'tool_execute' || event.kind === 'tool_result'),
-    )
-
+  function renderProcessSteps(runId: string, events: RunEvent[]) {
+    const items = buildProcessStepItems(runId, events)
     if (items.length === 0) return null
 
-    const maxPreviewChars = location === 'thinking' ? 240 : 520
     return (
-      <div className={`mira-tool-lines ${location === 'answer' ? 'inline' : ''}`}>
-        {items.map((item, i) => {
-          const payload = item.resultPayload ?? item.executeArgs
-          const preview = formatToolPayloadPreview(payload, { maxPreviewChars })
-          const oneLine = preview.previewText.replace(/\s+/g, ' ').trim()
-          const status = item.resultOk === undefined ? 'call' : item.resultOk ? 'ok' : 'error'
-          return (
-            <div key={`${runId}:${location}:${item.key}:${i}`} className="mira-tool-line">
-              <span className={`mira-tool-line-badge ${status}`}>{status}</span>
-              <span className="mira-tool-line-name">{item.name}</span>
-              {oneLine ? <span className="mira-tool-line-preview">{oneLine}</span> : null}
+      <div className="mira-process-steps">
+        {items.map((item) => (
+          <div
+            key={`${runId}:process-step:${item.key}`}
+            ref={(node) => {
+              processStepElementRefs.current[`${runId}:${item.key}`] = node
+            }}
+            className="mira-process-step"
+          >
+            <div className="mira-process-step-header">
+              <div className="mira-process-step-title">{item.title}</div>
+              <div className={`mira-process-step-status ${item.statusTone}`}>{item.statusLabel}</div>
             </div>
-          )
-        })}
+            {item.approvalRequested?.reason ? <div className="mira-process-step-meta">{item.approvalRequested.reason}</div> : null}
+            {item.resultPreview ? (
+              <div className="mira-process-step-result">
+                <span className="mira-process-step-result-label">Result</span>
+                <span className="mira-process-step-result-preview">{item.resultPreview}</span>
+              </div>
+            ) : null}
+            {item.interactive ? (
+              <div className="mira-approval-actions">
+                <button type="button" className="mira-approval-btn allow" onClick={() => handleApprovalDecision(runId, true)}>
+                  允许执行
+                </button>
+                <button type="button" className="mira-approval-btn deny" onClick={() => handleApprovalDecision(runId, false)}>
+                  拒绝执行
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ))}
       </div>
     )
   }
 
-  function renderApprovalDetails(runId: string, events: RunEvent[], location: 'thinking' | 'answer') {
-    const items = getApprovalEventsByLocation(events, location)
-    if (items.length === 0) return null
-
-    return (
-      <div className={`mira-tool-lines ${location === 'answer' ? 'inline' : ''}`}>
-        {items.map((event, index) => {
-          if (event.kind === 'approval_requested') {
-            const toolCallId = event.groupId ?? event.id
-            const uiState = approvalUiStates[runId]?.[toolCallId] ?? { status: 'pending' }
-            const interactive = isApprovalInteractive(uiState)
-            return (
-              <div key={`${runId}:approval:${event.id}:${index}`} className="mira-approval-line">
-                <span className="mira-tool-line-badge ask">ask</span>
-                <span className="mira-tool-line-name">{event.name}</span>
-                <span className="mira-tool-line-preview">{event.summary}</span>
-                <span className="mira-approval-reason">{event.reason}</span>
-                <span className="mira-approval-label">{getApprovalStatusText(uiState)}</span>
-                {interactive ? (
-                  <>
-                    <span className="mira-approval-actions">
-                      <button type="button" className="mira-approval-btn allow" onClick={() => handleApprovalDecision(runId, true)}>
-                        允许执行
-                      </button>
-                      <button type="button" className="mira-approval-btn deny" onClick={() => handleApprovalDecision(runId, false)}>
-                        拒绝执行
-                      </button>
-                    </span>
-                  </>
-                ) : null}
-              </div>
-            )
-          }
-          if (event.kind === 'approval_resolved') {
-            return (
-              <div key={`${runId}:approval:${event.id}:${index}`} className="mira-tool-line">
-                <span className={`mira-tool-line-badge ${event.approved ? 'ok' : 'error'}`}>{event.approved ? 'ok' : 'deny'}</span>
-                <span className="mira-tool-line-name">approval</span>
-                <span className="mira-tool-line-preview">{event.approved ? 'User approved the action' : 'User denied the action'}</span>
-              </div>
-            )
-          }
-          return null
-        })}
-      </div>
-    )
-  }
-
-  function renderAnswerSegments(runId: string, answerSegments: AnswerSegment[], events: RunEvent[]) {
-    const answerToolItems = buildToolDetailsItems(
-      filterRunEventsByLocation(events, 'answer').filter((event) => event.kind === 'tool_execute' || event.kind === 'tool_result'),
-    )
-    const toolItems = new Map(answerToolItems.map((item) => [item.key, item]))
-    const answerApprovalEntries: Array<
-      readonly [string, Extract<RunEvent, { kind: 'approval_requested' | 'approval_resolved' }>]
-    > = getApprovalEventsByLocation(events, 'answer').map((event) => [event.groupId ?? event.id, event] as const)
-    const approvalByGroup = new Map(answerApprovalEntries)
-
-    return (
-      <div className="mira-answer-segments">
-        {answerSegments.map((segment, index) => {
-          if (segment.kind === 'text') {
-            return (
-              <div key={`${runId}:segment:text:${segment.id}:${index}`} className="mira-answer-segment-text">
-                {segment.text}
-              </div>
-            )
-          }
-          if (segment.kind === 'tool') {
-            const item = toolItems.get(segment.eventId)
-            if (!item) return null
-            const payload = item.resultPayload ?? item.executeArgs
-            const preview = formatToolPayloadPreview(payload, { maxPreviewChars: 520 })
-            const oneLine = preview.previewText.replace(/\s+/g, ' ').trim()
-            const status = item.resultOk === undefined ? 'call' : item.resultOk ? 'ok' : 'error'
-            return (
-              <div key={`${runId}:segment:tool:${segment.id}:${index}`} className="mira-tool-lines inline">
-                <div className="mira-tool-line">
-                  <span className={`mira-tool-line-badge ${status}`}>{status}</span>
-                  <span className="mira-tool-line-name">{item.name}</span>
-                  {oneLine ? <span className="mira-tool-line-preview">{oneLine}</span> : null}
-                </div>
-              </div>
-            )
-          }
-          const approval = approvalByGroup.get(segment.eventId)
-          if (!approval) return null
-          if (approval.kind === 'approval_requested') {
-            const toolCallId = approval.groupId ?? approval.id
-            const uiState = approvalUiStates[runId]?.[toolCallId] ?? { status: 'pending' }
-            const interactive = isApprovalInteractive(uiState)
-            return (
-              <div key={`${runId}:segment:approval:${segment.id}:${index}`} className="mira-tool-lines inline">
-                <div className="mira-approval-line">
-                  <span className="mira-tool-line-badge ask">ask</span>
-                  <span className="mira-tool-line-name">{approval.name}</span>
-                  <span className="mira-tool-line-preview">{approval.summary}</span>
-                  <span className="mira-approval-reason">{approval.reason}</span>
-                  <span className="mira-approval-label">{getApprovalStatusText(uiState)}</span>
-                  {interactive ? (
-                    <>
-                      <span className="mira-approval-actions">
-                        <button type="button" className="mira-approval-btn allow" onClick={() => handleApprovalDecision(runId, true)}>
-                          允许执行
-                        </button>
-                        <button type="button" className="mira-approval-btn deny" onClick={() => handleApprovalDecision(runId, false)}>
-                          拒绝执行
-                        </button>
-                      </span>
-                    </>
-                  ) : null}
-                </div>
-              </div>
-            )
-          }
-          if (approval.kind === 'approval_resolved') {
-            return (
-              <div key={`${runId}:segment:approval:${segment.id}:${index}`} className="mira-tool-lines inline">
-                <div className="mira-tool-line">
-                  <span className={`mira-tool-line-badge ${approval.approved ? 'ok' : 'error'}`}>{approval.approved ? 'ok' : 'deny'}</span>
-                  <span className="mira-tool-line-name">approval</span>
-                  <span className="mira-tool-line-preview">{approval.approved ? 'User approved the action' : 'User denied the action'}</span>
-                </div>
-              </div>
-            )
-          }
-          return null
-        })}
-      </div>
-    )
+  function getVisibleAssistantText(text: string | null | undefined) {
+    return sanitizeThink(text ?? '').visibleText
   }
 
   return (
@@ -1260,19 +1803,48 @@ function App() {
           </div>
           <div className="mira-sidebar-title">Recents</div>
           <div className="mira-chat-list" role="list">
-            {chats.map((c) => (
-              <button
-                type="button"
-                key={c.id}
-                className={`mira-chat-item ${c.id === selectedChatId ? 'selected' : ''}`}
-                onClick={() => {
-                  setSelectedChatId(c.id)
-                  setDrawerOpen(false)
-                }}
-                role="listitem"
-              >
-                {c.title}
-              </button>
+            {sortedChats.map((c) => (
+              <div key={c.id} className={`mira-chat-row ${c.id === selectedChatId ? 'selected' : ''}`} role="listitem">
+                <button
+                  type="button"
+                  className={`mira-chat-item ${c.id === selectedChatId ? 'selected' : ''}`}
+                  onClick={() => {
+                    activateChat(c.id)
+                    setDrawerOpen(false)
+                    setOpenChatMenuId(null)
+                  }}
+                >
+                  {c.pinnedAt ? <Pin size={12} strokeWidth={2} className="mira-chat-pin" /> : null}
+                  {c.title}
+                </button>
+                <button
+                  type="button"
+                  className="mira-chat-more"
+                  aria-label={`Session actions ${c.title}`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setOpenChatMenuId((prev) => (prev === c.id ? null : c.id))
+                  }}
+                >
+                  <MoreHorizontal size={14} strokeWidth={2} />
+                </button>
+                {openChatMenuId === c.id ? (
+                  <div className="mira-chat-menu">
+                    <button type="button" className="mira-chat-menu-item" aria-label="Pin" onClick={() => handleTogglePin(c.id)}>
+                      <Pin size={14} strokeWidth={2} />
+                      <span>{c.pinnedAt ? 'Unpin' : 'Pin'}</span>
+                    </button>
+                    <button type="button" className="mira-chat-menu-item" aria-label="Rename" onClick={() => handleRenameChat(c.id)}>
+                      <Pencil size={14} strokeWidth={2} />
+                      <span>Rename</span>
+                    </button>
+                    <button type="button" className="mira-chat-menu-item danger" aria-label="Delete" onClick={() => handleDeleteChat(c.id)}>
+                      <Trash2 size={14} strokeWidth={2} />
+                      <span>Delete</span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             ))}
           </div>
         </div>
@@ -1297,36 +1869,45 @@ function App() {
         <div className="mira-topbar">
           <h1 className="mira-topbar-title">{chats.find((c) => c.id === selectedChatId)?.title ?? 'Chat'}</h1>
           <div className="mira-topbar-actions">
-            <button type="button" className="mira-icon-btn" onClick={() => setShowModelSettings(true)} aria-label="Settings">
-              ⚙
+            <button type="button" className="mira-icon-btn" onClick={handleBranchToNewChat} aria-label="Branch">
+              <BranchIcon size={18} />
+            </button>
+            <button
+              type="button"
+              className="mira-workspace-btn"
+              aria-label="Workspace"
+              onClick={() => void handlePickWorkspace()}
+            >
+              <FolderOpen size={16} strokeWidth={2} />
+              <span>{formattedWorkspace}</span>
             </button>
           </div>
         </div>
 
-        <div ref={threadRef} className="mira-thread">
-          <div className="mira-thread-header">
-            <div className="mira-thread-meta-row">
-              <button
-                type="button"
-                className="mira-thread-meta-item mira-chip-clickable"
-                onClick={() => void handlePickWorkspace()}
-                data-tooltip={workspaceTooltip}
-              >
-                <span className="mira-thread-meta-label">Workspace</span>
-                <span className="mira-thread-meta-value mira-mono">{formattedWorkspace}</span>
-              </button>
-              <div className="mira-thread-meta-item">
-                <span className="mira-thread-meta-label">MiniMax</span>
-                <span className="mira-thread-meta-value">{configured ? '已配置' : '未配置'}</span>
-              </div>
-            </div>
-          </div>
+        <div
+          ref={threadRef}
+          className="mira-thread"
+          onScroll={() => {
+            if (suppressThreadScrollRef.current) return
+            if (runningChatId !== selectedChatId) return
+            const currentRunId = activeRunIdRef.current
+            if (!currentRunId) return
+            followStateRef.current = interruptRunFollow(followStateRef.current, currentRunId)
+          }}
+        >
           {errorMessage ? <div className="mira-banner error">{errorMessage}</div> : null}
 
           <div className="mira-messages">
             {selectedThread.map((m) => (
               m.kind === 'run' ? (
-                <div key={m.id} className={`mira-run ${m.status}`}>
+                <div
+                  key={m.id}
+                  ref={(node) => {
+                    messageElementRefs.current[m.id] = node
+                  }}
+                  data-testid={`thread-message-${m.id}`}
+                  className={`mira-run ${m.status}`}
+                >
                   <div className="mira-run-label">
                     <span className="mira-run-model">MiniMax-M2.7</span>
                     <span className="mira-mono">{m.time}</span>
@@ -1358,35 +1939,93 @@ function App() {
                             {m.status === 'pending' ? 'Research trace will appear here...' : 'No reasoning text was returned for this research run.'}
                           </div>
                         ) : null}
-                        {renderToolDetails(m.id, m.events, 'thinking')}
-                        {renderApprovalDetails(m.id, m.events, 'thinking')}
+                        {renderProcessSteps(m.id, m.events)}
                       </div>
                     </details>
                   ) : null}
 
-                  {m.finalText || pendingApprovals[m.id] ? (
+                  {(() => {
+                    const visibleFinalText = getVisibleAssistantText(m.finalText)
+                    const showAssistantMessage = (m.status === 'completed' || m.status === 'error') && Boolean(visibleFinalText.trim())
+                    return showAssistantMessage ? (
                     <div className="mira-msg assistant">
-                      <div className="mira-msg-body">
-                        {m.mode === 'normal' && m.answerSegments.length > 0
-                          ? renderAnswerSegments(m.id, m.answerSegments, m.events)
-                          : (
-                              <>
-                                {m.finalText}
-                                {m.mode === 'normal' ? renderApprovalDetails(m.id, m.events, 'answer') : null}
-                                {m.mode === 'normal' ? renderToolDetails(m.id, m.events, 'answer') : null}
-                              </>
-                            )}
+                      <div className="mira-msg-body mira-assistant-body">
+                        {renderAssistantBlocks(visibleFinalText)}
+                      </div>
+                      <div className="mira-msg-actions-bottom">
+                        {!isRunningCurrentChat ? (
+                          <>
+                            <button
+                              type="button"
+                              className="mira-msg-action-icon mira-tooltip"
+                              aria-label="Copy"
+                              data-tooltip="Copy"
+                              onClick={() => void copyToClipboard(visibleFinalText)}
+                            >
+                              <Copy strokeWidth={2} />
+                            </button>
+                            <button
+                              type="button"
+                              className="mira-msg-action-icon mira-tooltip"
+                              aria-label="Retry"
+                              data-tooltip="Retry"
+                              onClick={() => void handleRetryRun(m.id)}
+                            >
+                              <RotateCcw strokeWidth={2} />
+                            </button>
+                            <button
+                              type="button"
+                              className="mira-msg-action-icon mira-tooltip"
+                              aria-label="Branch"
+                              data-tooltip="Branch"
+                              onClick={handleBranchToNewChat}
+                            >
+                              <BranchIcon size={12} />
+                            </button>
+                          </>
+                        ) : null}
                       </div>
                     </div>
-                  ) : null}
+                    ) : null
+                  })()}
                 </div>
               ) : (
-                <div key={m.id} data-thread-message-id={m.id} className={`mira-msg ${m.kind === 'user' ? 'you' : 'assistant'}`}>
+                <div
+                  key={m.id}
+                  ref={(node) => {
+                    messageElementRefs.current[m.id] = node
+                  }}
+                  data-testid={`thread-message-${m.id}`}
+                  data-thread-message-id={m.id}
+                  className={`mira-msg ${m.kind === 'user' ? 'you' : 'assistant'}`}
+                >
                   <div className="mira-msg-meta">
                     <span>{m.kind === 'user' ? 'You' : 'circleloop'}</span>
                     <span className="mira-mono">{m.time}</span>
                   </div>
                   <div className="mira-msg-body">{m.text}</div>
+                  <div className="mira-msg-actions-bottom">
+                    <button
+                      type="button"
+                      className="mira-msg-action-icon mira-tooltip"
+                      aria-label="Copy"
+                      data-tooltip="Copy"
+                      onClick={() => void copyToClipboard(m.text)}
+                    >
+                      <Copy strokeWidth={2} />
+                    </button>
+                    {m.kind === 'user' && !isRunningCurrentChat ? (
+                      <button
+                        type="button"
+                        className="mira-msg-action-icon mira-tooltip"
+                        aria-label="Undo"
+                        data-tooltip="Undo"
+                        onClick={() => void handleUndoUser(m.id)}
+                      >
+                        <Undo2 strokeWidth={2} />
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               )
             ))}
@@ -1439,7 +2078,7 @@ function App() {
                     onClick={handleStopRun}
                     aria-label="Stop"
                   >
-                    ■
+                    <Square size={16} strokeWidth={2.4} />
                   </button>
                 ) : (
                   <button

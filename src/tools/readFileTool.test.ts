@@ -6,7 +6,7 @@ describe('read file tool', () => {
     const readTextFile = vi.fn().mockResolvedValue('hello')
     const tool = createReadFileTool({
       workspacePath: '/tmp/ws',
-      fileOps: { readTextFile, listDir: vi.fn() },
+      fileOps: { exists: vi.fn().mockResolvedValue(true), readTextFile, listDir: vi.fn() } as any,
     })
 
     const result = await tool.handler({ path: 'README.md' })
@@ -18,7 +18,7 @@ describe('read file tool', () => {
     const readTextFile = vi.fn()
     const tool = createReadFileTool({
       workspacePath: '/tmp/ws',
-      fileOps: { readTextFile, listDir: vi.fn() },
+      fileOps: { exists: vi.fn().mockResolvedValue(true), readTextFile, listDir: vi.fn() } as any,
     })
 
     const result = await tool.handler({ path: '../secret' })
@@ -26,4 +26,3 @@ describe('read file tool', () => {
     expect(result.ok === false && result.error.code).toBe('INVALID_PATH')
   })
 })
-

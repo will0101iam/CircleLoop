@@ -109,8 +109,7 @@ export function appendRunAnswerMarker(
 ): ThreadMessage[] {
   return messages.map((m) => {
     if (m.kind !== 'run' || m.id !== runId) return m
-    const last = m.answerSegments[m.answerSegments.length - 1]
-    if (last?.kind === marker.kind && last.eventId === marker.eventId) return m
+    if (m.answerSegments.some((segment) => segment.kind === marker.kind && segment.eventId === marker.eventId)) return m
     return { ...m, answerSegments: [...m.answerSegments, marker] }
   })
 }

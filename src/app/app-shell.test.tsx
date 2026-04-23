@@ -3,12 +3,13 @@ import { describe, expect, it } from 'vitest'
 import App from '../App'
 
 describe('App shell', () => {
-  it('renders compact unbound workspace text and minimax label', () => {
+  it('renders workspace button in topbar instead of old thread meta row', () => {
     render(<App />)
 
-    expect(screen.getByText('Workspace')).toBeInTheDocument()
-    expect(screen.getByText('未绑定')).toBeInTheDocument()
-    expect(screen.queryByText('当前尚未选择工作区')).not.toBeInTheDocument()
-    expect(screen.getByText('MiniMax')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Workspace' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Branch' })).toBeInTheDocument()
+    expect(screen.getByText('选择工作区')).toBeInTheDocument()
+    expect(screen.queryByText('MiniMax')).not.toBeInTheDocument()
+    expect(screen.queryByText('Workspace')).not.toBeInTheDocument()
   })
 })

@@ -17,6 +17,7 @@ describe('globFilesTool', () => {
     const tool = createGlobFilesTool({
       workspacePath: '/tmp/ws',
       fileOps: {
+        exists: vi.fn().mockResolvedValue(true),
         listDir: vi.fn(async (path: string) => tree[path] ?? []),
         readTextFile: vi.fn(),
       } as any,

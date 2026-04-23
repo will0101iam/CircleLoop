@@ -31,7 +31,10 @@ describe('session store', () => {
 
   it('persists a new session through the sqlite adapter', async () => {
     const run = vi.fn().mockResolvedValue(undefined)
-    const query = vi.fn().mockResolvedValueOnce([{ name: 'workspace_path' }]).mockResolvedValueOnce([{ name: 'workspace_path', notnull: 0 }])
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce([{ name: 'workspace_path' }, { name: 'pinned_at' }, { name: 'last_activated_at' }])
+      .mockResolvedValueOnce([{ name: 'workspace_path', notnull: 0 }])
     const store = createSessionStore({
       db: { run, query },
       createId: () => 'session-42',
@@ -55,7 +58,7 @@ describe('session store', () => {
     )
     expect(run).toHaveBeenNthCalledWith(
       3,
-      'create table if not exists chat_threads (id text primary key, title text not null, workspace_path text, messages_json text not null, created_at integer not null, updated_at integer not null)',
+      'create table if not exists chat_threads (id text primary key, title text not null, workspace_path text, pinned_at integer, last_activated_at integer, messages_json text not null, created_at integer not null, updated_at integer not null)',
       [],
     )
     expect(run).toHaveBeenNthCalledWith(
@@ -67,7 +70,10 @@ describe('session store', () => {
 
   it('persists null workspace_path when session is created before binding', async () => {
     const run = vi.fn().mockResolvedValue(undefined)
-    const query = vi.fn().mockResolvedValueOnce([{ name: 'workspace_path' }]).mockResolvedValueOnce([{ name: 'workspace_path', notnull: 0 }])
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce([{ name: 'workspace_path' }, { name: 'pinned_at' }, { name: 'last_activated_at' }])
+      .mockResolvedValueOnce([{ name: 'workspace_path', notnull: 0 }])
     const store = createSessionStore({
       db: { run, query },
       createId: () => 'session-unbound',
@@ -90,6 +96,8 @@ describe('session store', () => {
     const run = vi.fn().mockResolvedValue(undefined)
     const query = vi.fn().mockResolvedValueOnce([
       { name: 'workspace_path' },
+      { name: 'pinned_at' },
+      { name: 'last_activated_at' },
     ]).mockResolvedValueOnce([
       { name: 'workspace_path', notnull: 0 },
     ]).mockResolvedValueOnce([
@@ -129,7 +137,7 @@ describe('session store', () => {
     )
     expect(run).toHaveBeenNthCalledWith(
       3,
-      'create table if not exists chat_threads (id text primary key, title text not null, workspace_path text, messages_json text not null, created_at integer not null, updated_at integer not null)',
+      'create table if not exists chat_threads (id text primary key, title text not null, workspace_path text, pinned_at integer, last_activated_at integer, messages_json text not null, created_at integer not null, updated_at integer not null)',
       [],
     )
     expect(query).toHaveBeenCalledWith(

@@ -11,7 +11,7 @@ export async function applyMigrations(deps: {
     [],
   )
   await deps.run(
-    'create table if not exists chat_threads (id text primary key, title text not null, workspace_path text, messages_json text not null, created_at integer not null, updated_at integer not null)',
+    'create table if not exists chat_threads (id text primary key, title text not null, workspace_path text, pinned_at integer, last_activated_at integer, messages_json text not null, created_at integer not null, updated_at integer not null)',
     [],
   )
 
@@ -21,6 +21,14 @@ export async function applyMigrations(deps: {
   const hasWorkspacePath = chatThreadColumns.some((column) => column.name === 'workspace_path')
   if (!hasWorkspacePath) {
     await deps.run('alter table chat_threads add column workspace_path text', [])
+  }
+  const hasPinnedAt = chatThreadColumns.some((column) => column.name === 'pinned_at')
+  if (!hasPinnedAt) {
+    await deps.run('alter table chat_threads add column pinned_at integer', [])
+  }
+  const hasLastActivatedAt = chatThreadColumns.some((column) => column.name === 'last_activated_at')
+  if (!hasLastActivatedAt) {
+    await deps.run('alter table chat_threads add column last_activated_at integer', [])
   }
 
   const sessionColumns = await deps.query<Array<{ name: string; notnull: number }>[number]>('pragma table_info(sessions)', [])

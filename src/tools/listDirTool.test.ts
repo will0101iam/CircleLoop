@@ -6,7 +6,7 @@ describe('list dir tool', () => {
     const listDir = vi.fn().mockResolvedValue([{ name: 'src', isDir: true }])
     const tool = createListDirTool({
       workspacePath: '/tmp/ws',
-      fileOps: { listDir, readTextFile: vi.fn() },
+      fileOps: { exists: vi.fn().mockResolvedValue(true), listDir, readTextFile: vi.fn() } as any,
     })
 
     const result = await tool.handler({ path: '.' })
@@ -18,7 +18,7 @@ describe('list dir tool', () => {
     const listDir = vi.fn()
     const tool = createListDirTool({
       workspacePath: '/tmp/ws',
-      fileOps: { listDir, readTextFile: vi.fn() },
+      fileOps: { exists: vi.fn().mockResolvedValue(true), listDir, readTextFile: vi.fn() } as any,
     })
 
     const result = await tool.handler({ path: '/etc' })
@@ -26,4 +26,3 @@ describe('list dir tool', () => {
     expect(result.ok === false && result.error.code).toBe('INVALID_PATH')
   })
 })
-

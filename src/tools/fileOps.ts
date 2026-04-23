@@ -4,6 +4,7 @@ export type DirEntry = {
 }
 
 export type FileOps = {
+  exists: (path: string) => Promise<boolean>
   readTextFile: (path: string) => Promise<string>
   writeTextFile: (path: string, content: string) => Promise<void>
   listDir: (path: string) => Promise<DirEntry[]>

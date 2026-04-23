@@ -10,6 +10,7 @@ describe('runtime file tools', () => {
     const rt = await createRuntime({
       createAppDb,
       fileOps: {
+        exists: vi.fn().mockResolvedValue(false),
         listDir: vi.fn(),
         readTextFile: vi.fn(),
         writeTextFile: vi.fn(),
@@ -36,6 +37,7 @@ describe('runtime file tools', () => {
       createAppDb,
       workspacePath: '/tmp/ws',
       fileOps: {
+        exists: vi.fn().mockResolvedValue(true),
         listDir,
         readTextFile,
         writeTextFile: vi.fn(),
