@@ -43,4 +43,17 @@ describe('runtime', () => {
     if (!listed.ok) throw new Error('expected ok')
     expect((listed.data as { sessions: Array<{ id: string }> }).sessions[0]?.id).toBe('session-2')
   })
+
+  it('registers update_plan as a safe runtime tool', async () => {
+    const createAppDb = vi.fn().mockResolvedValue({ query: vi.fn().mockResolvedValue([]), run: vi.fn().mockResolvedValue(undefined) })
+    const rt = await createRuntime({ createAppDb })
+
+    const tool = rt.tools.get('update_plan')
+    expect(tool?.policy?.riskLevel).toBe('safe')
+
+    const result = await rt.tools.execute('update_plan', {
+      steps: [{ id: 'verify', title: 'Run tests', status: 'active' }],
+    })
+    expect(result.ok).toBe(true)
+  })
 })

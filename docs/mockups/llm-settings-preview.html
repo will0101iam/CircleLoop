@@ -1,0 +1,1181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CircleLoop Settings Prototype</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f5f4;
+        --page: #fbfbfa;
+        --panel: #ffffff;
+        --panel-soft: #fafaf9;
+        --text: #18181b;
+        --muted: #71717a;
+        --line: #e7e5e4;
+        --line-strong: #d6d3d1;
+        --accent: #2563eb;
+        --accent-soft: #eff6ff;
+        --success: #166534;
+        --success-soft: #f0fdf4;
+        --danger: #dc2626;
+        --shadow: 0 24px 80px rgba(28, 25, 23, 0.12);
+        --radius-lg: 22px;
+        --radius-md: 16px;
+        --radius-sm: 12px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, #ffffff 0, #f7f6f4 22%, #efedea 100%);
+      }
+
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      .window {
+        min-height: 100vh;
+        padding: 22px;
+      }
+
+      .shell {
+        min-height: calc(100vh - 44px);
+        display: grid;
+        grid-template-columns: 258px minmax(0, 1fr);
+        overflow: hidden;
+        border: 1px solid rgba(231, 229, 228, 0.9);
+        border-radius: 26px;
+        background: rgba(255, 255, 255, 0.72);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+
+      .app-sidebar {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 16px 14px;
+        border-right: 1px solid var(--line);
+        background: rgba(250, 250, 249, 0.88);
+      }
+
+      .sidebar-top {
+        display: grid;
+        gap: 16px;
+      }
+
+      .brand {
+        padding: 2px 8px 0;
+        font-size: 16px;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+      }
+
+      .new-chat {
+        width: 100%;
+        height: 36px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: #fff;
+      }
+
+      .chat-list {
+        display: grid;
+        gap: 4px;
+      }
+
+      .nav-item,
+      .chat-item,
+      .settings-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        border: 0;
+        background: transparent;
+        text-align: left;
+      }
+
+      .chat-item {
+        min-height: 34px;
+        padding: 0 10px;
+        border-radius: 10px;
+        color: var(--muted);
+      }
+
+      .chat-item.active {
+        background: #ffffff;
+        color: var(--text);
+        box-shadow: inset 0 0 0 1px var(--line);
+      }
+
+      .sidebar-label {
+        font-size: 12px;
+        color: #a8a29e;
+      }
+
+      .sidebar-section-title {
+        margin: 4px 10px 2px;
+        font-size: 12px;
+        color: #a8a29e;
+      }
+
+      .sidebar-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding-top: 10px;
+        border-top: 1px solid var(--line);
+      }
+
+      .user-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .avatar {
+        width: 24px;
+        height: 24px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #000000;
+        border-radius: 0;
+        background: transparent;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .user-name {
+        font-size: 13px;
+        color: var(--text);
+        white-space: nowrap;
+      }
+
+      .sidebar-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .sidebar-icon {
+        width: 34px;
+        height: 34px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+        color: #000000;
+      }
+
+      .sidebar-icon svg {
+        width: 18px;
+        height: 18px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.75;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        overflow: visible;
+      }
+
+      .sidebar-icon:hover {
+        background: #000000;
+        color: #ffffff;
+      }
+
+      .sidebar-icon.active {
+        background: #000000;
+        color: #ffffff;
+      }
+
+      .content {
+        padding: 28px;
+        overflow: auto;
+      }
+
+      .settings-shell {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        gap: 20px;
+        min-height: 100%;
+      }
+
+      .settings-side,
+      .settings-main {
+        min-width: 0;
+      }
+
+      .settings-header {
+        margin-bottom: 18px;
+      }
+
+      .settings-title {
+        margin: 0 0 4px;
+        font-size: 30px;
+        line-height: 1.1;
+      }
+
+      .settings-subtitle {
+        color: var(--muted);
+      }
+
+      .settings-nav {
+        display: grid;
+        gap: 6px;
+      }
+
+      .settings-nav-group {
+        display: grid;
+        gap: 4px;
+        padding-top: 4px;
+      }
+
+      .settings-nav-label {
+        padding: 0 12px 4px;
+        font-size: 12px;
+        color: #a8a29e;
+      }
+
+      .settings-nav-item {
+        min-height: 40px;
+        padding: 0 12px;
+        border-radius: 0;
+        color: var(--muted);
+      }
+
+      .settings-nav-item.active {
+        background: #000000;
+        color: #ffffff;
+        box-shadow: none;
+      }
+
+      .cards {
+        display: grid;
+        gap: 12px;
+      }
+
+      .card {
+        border: 1px solid #000000;
+        border-radius: 0;
+        background: var(--panel);
+        padding: 16px;
+      }
+
+      .card-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .card-head h3 {
+        margin: 0 0 4px;
+        font-size: 15px;
+      }
+
+      .card-head p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: auto;
+        padding: 0;
+        border-radius: 0;
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        white-space: nowrap;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .pill.success {
+        color: #000000;
+      }
+
+      .pill.danger {
+        color: #000000;
+      }
+
+      .ghost-btn,
+      .primary-btn,
+      .danger-btn {
+        min-height: 34px;
+        padding: 0 12px;
+        border-radius: 0;
+        border: 1px solid #000000;
+        background: transparent;
+        color: var(--text);
+      }
+
+      .ghost-btn:hover {
+        background: #000000;
+        color: #ffffff;
+      }
+
+      .primary-btn {
+        border-color: #000000;
+        background: #000000;
+        color: #fff;
+      }
+
+      .danger-btn {
+        color: #000000;
+      }
+
+      .diagnostic {
+        display: grid;
+        gap: 12px;
+      }
+
+      .diagnostic-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .diagnostic-box {
+        padding: 14px;
+        border-radius: 0;
+        border: none;
+        background: #f5f5f4;
+      }
+
+      .diagnostic-label {
+        margin-bottom: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .diagnostic-value {
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      .diagnostic-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .default-model-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: end;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .field label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .field input,
+      .field select,
+      .field textarea {
+        width: 100%;
+        min-width: 0;
+        border: 1px solid #000000;
+        border-radius: 0;
+        padding: 10px 12px;
+        background: transparent;
+        color: var(--text);
+      }
+
+      .field textarea {
+        min-height: 96px;
+        resize: vertical;
+      }
+
+      .provider-list,
+      .add-provider-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .provider-row,
+      .provider-option {
+        display: grid;
+        gap: 14px;
+        padding: 16px;
+        border: 1px solid #000000;
+        border-radius: 0;
+        background: #ffffff;
+      }
+
+      .provider-top,
+      .provider-option-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .provider-name-wrap {
+        display: grid;
+        gap: 3px;
+      }
+
+      .provider-name {
+        font-weight: 700;
+      }
+
+      .provider-desc {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .provider-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .provider-form {
+        display: none;
+        gap: 12px;
+        padding-top: 2px;
+      }
+
+      .provider-form.visible {
+        display: grid;
+      }
+
+      .provider-form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .provider-form-grid .field.full {
+        grid-column: 1 / -1;
+      }
+
+      .inline-note {
+        padding: 10px 12px;
+        border-radius: 0;
+        background: #f5f5f4;
+        border: none;
+        color: var(--muted);
+      }
+
+      .summary-box {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-radius: 0;
+        border: none;
+        background: #f5f5f4;
+      }
+
+      .count-text {
+        color: var(--muted);
+      }
+
+      .summary-title {
+        font-weight: 600;
+      }
+
+      .summary-desc {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .hidden-panel {
+        display: none;
+      }
+
+      .hidden-panel.visible {
+        display: grid;
+        gap: 16px;
+      }
+
+      .placeholder-card {
+        padding: 24px;
+        border: 1px dashed var(--line-strong);
+        border-radius: var(--radius-lg);
+        background: rgba(255, 255, 255, 0.65);
+        color: var(--muted);
+      }
+
+      .composer-preview {
+        display: grid;
+        gap: 12px;
+        margin-top: 4px;
+      }
+
+      .composer-shell {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px;
+        border: 1px solid #000000;
+        border-radius: 0;
+        background: transparent;
+      }
+
+      .composer-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 38px;
+        padding: 0 14px;
+        border-radius: 0;
+        border: 1px solid #000000;
+        background: transparent;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .composer-input {
+        flex: 1;
+        min-width: 0;
+        height: 42px;
+        border: 0;
+        outline: none;
+        background: transparent;
+      }
+
+      .composer-send {
+        min-width: 72px;
+      }
+
+      .tip {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      @media (max-width: 1160px) {
+        .settings-shell {
+          grid-template-columns: 1fr;
+        }
+
+        .diagnostic-grid,
+        .provider-form-grid,
+        .default-model-row {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 920px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+
+        .app-sidebar {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+      }
+
+      @media (max-width: 640px) {
+        .window {
+          padding: 10px;
+        }
+
+        .content {
+          padding: 16px;
+        }
+
+        .card,
+        .provider-row,
+        .provider-option {
+          padding: 14px;
+        }
+
+        .card-head,
+        .provider-top,
+        .provider-option-top,
+        .summary-box {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .provider-actions,
+        .diagnostic-foot {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="window">
+      <div class="shell">
+        <aside class="app-sidebar">
+          <div class="sidebar-top">
+            <div class="brand">circleloop</div>
+            <button class="new-chat">+ 新对话</button>
+
+            <div class="chat-list">
+              <div class="sidebar-section-title">对话列表</div>
+              <button class="chat-item active">cl</button>
+              <button class="chat-item">j</button>
+            </div>
+          </div>
+
+          <div class="sidebar-footer">
+            <div class="user-pill">
+              <span class="avatar">B</span>
+              <span class="user-name">bytedance</span>
+            </div>
+            <div class="sidebar-actions">
+              <button class="sidebar-icon" aria-label="状态">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="7"></circle>
+                  <circle cx="12" cy="12" r="1.5"></circle>
+                </svg>
+              </button>
+              <button class="sidebar-icon" aria-label="历史">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 12a8 8 0 1 0 2.2-5.5"></path>
+                  <path d="M4 4v5h5"></path>
+                  <path d="M12 8v4l2.5 1.5"></path>
+                </svg>
+              </button>
+              <button class="sidebar-icon active" aria-label="设置">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <line x1="4" y1="6" x2="20" y2="6"></line>
+                  <line x1="4" y1="12" x2="20" y2="12"></line>
+                  <line x1="4" y1="18" x2="20" y2="18"></line>
+                  <circle cx="9" cy="6" r="2"></circle>
+                  <circle cx="15" cy="12" r="2"></circle>
+                  <circle cx="11" cy="18" r="2"></circle>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        <main class="content">
+          <div class="settings-shell">
+            <aside class="settings-side">
+              <div class="settings-header">
+                <h1 class="settings-title">设置</h1>
+                <div class="settings-subtitle">管理 CircleLoop 的模型与渠道配置</div>
+              </div>
+
+              <div class="settings-nav">
+                <div class="settings-nav-group">
+                  <div class="settings-nav-label">通用</div>
+                  <button class="settings-nav-item" data-tab="general">通用</button>
+                </div>
+
+                <div class="settings-nav-group">
+                  <div class="settings-nav-label">模型</div>
+                  <button class="settings-nav-item active" data-tab="providers">模型与渠道</button>
+                  <button class="settings-nav-item" data-tab="skills">Skills</button>
+                  <button class="settings-nav-item" data-tab="mcp">MCP</button>
+                  <button class="settings-nav-item" data-tab="usage">用量统计</button>
+                  <button class="settings-nav-item" data-tab="assistant">助理</button>
+                </div>
+              </div>
+            </aside>
+
+            <section class="settings-main">
+              <div class="hidden-panel visible" data-panel="providers">
+                <div class="cards">
+                  <section class="card">
+                    <div class="card-head">
+                      <div>
+                        <h3>连接诊断</h3>
+                        <p>检查网络、API Key 和默认模型是否可正常请求。</p>
+                      </div>
+                      <button class="ghost-btn" id="runDiagnosticBtn">运行诊断</button>
+                    </div>
+
+                    <div class="diagnostic">
+                      <div class="diagnostic-grid">
+                        <div class="diagnostic-box">
+                          <div class="diagnostic-label">默认服务商</div>
+                          <div class="diagnostic-value" id="diagProvider">OpenRouter</div>
+                        </div>
+                        <div class="diagnostic-box">
+                          <div class="diagnostic-label">默认模型</div>
+                          <div class="diagnostic-value" id="diagModel">gpt-4o-mini</div>
+                        </div>
+                        <div class="diagnostic-box">
+                          <div class="diagnostic-label">最近检查</div>
+                          <div class="diagnostic-value" id="diagTime">未运行</div>
+                        </div>
+                      </div>
+
+                      <div class="diagnostic-foot">
+                        <div class="pill success" id="diagStatus">连接状态正常</div>
+                        <div class="tip" id="diagTip">已连接 3 个渠道，可正常打开默认模型下拉。</div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="card">
+                    <div class="card-head">
+                      <div>
+                        <h3>默认模型</h3>
+                        <p>仅影响新对话；已有会话保持自己的模型选择不变。</p>
+                      </div>
+                      <div class="pill count-text" id="defaultSummaryPill">当前：OpenRouter / gpt-4o-mini</div>
+                    </div>
+
+                    <div class="default-model-row">
+                      <div class="field">
+                        <label for="defaultProvider">默认服务商</label>
+                        <select id="defaultProvider"></select>
+                      </div>
+                      <div class="field">
+                        <label for="defaultModel">默认模型</label>
+                        <select id="defaultModel"></select>
+                      </div>
+                      <button class="primary-btn" id="saveDefaultBtn">保存默认值</button>
+                    </div>
+                  </section>
+
+                  <section class="card">
+                    <div class="card-head">
+                      <div>
+                        <h3>已连接的提供商</h3>
+                        <p>点开某个渠道后，可直接修改地址、密钥和手动维护的模型列表。</p>
+                      </div>
+                      <div class="pill count-text" id="connectedCountPill">已连接 3 个</div>
+                    </div>
+
+                    <div class="provider-list" id="connectedProviders"></div>
+                  </section>
+
+                  <section class="card">
+                    <div class="card-head">
+                      <div>
+                        <h3>添加提供商</h3>
+                        <p>只展示还没接入的渠道，避免一进来把所有配置都铺满屏幕。</p>
+                      </div>
+                      <div class="pill count-text" id="availableCountPill">待添加 4 个</div>
+                    </div>
+
+                    <div class="add-provider-list" id="availableProviders"></div>
+                  </section>
+
+                  <section class="card">
+                    <div class="card-head">
+                      <div>
+                        <h3>会话里的实际效果</h3>
+                        <p>输入框左侧只显示模型名，下拉里只出现已经配置好的模型。</p>
+                      </div>
+                    </div>
+
+                    <div class="composer-preview">
+                      <div class="summary-box">
+                        <div>
+                          <div class="summary-title">当前会话模型 Chip</div>
+                          <div class="summary-desc" id="composerSummary">
+                            新对话会默认使用 OpenRouter / gpt-4o-mini
+                          </div>
+                        </div>
+                        <div class="pill success">只显示已配置模型</div>
+                      </div>
+
+                      <div class="composer-shell">
+                        <button class="composer-chip" id="composerChip">gpt-4o-mini ▾</button>
+                        <input class="composer-input" placeholder="Ask anything..." />
+                        <button class="primary-btn composer-send">Send</button>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+
+              <div class="hidden-panel" data-panel="general">
+                <div class="placeholder-card">这里后续可以放通用设置，例如主题、窗口行为、快捷键。</div>
+              </div>
+
+              <div class="hidden-panel" data-panel="skills">
+                <div class="placeholder-card">这里后续可以放 Skills 的启用状态、排序、默认行为和可见性设置。</div>
+              </div>
+
+              <div class="hidden-panel" data-panel="mcp">
+                <div class="placeholder-card">这里后续可以放 MCP 服务连接、授权状态和服务开关。</div>
+              </div>
+
+              <div class="hidden-panel" data-panel="usage">
+                <div class="placeholder-card">这里后续可以放模型调用次数、token 统计和最近错误记录。</div>
+              </div>
+
+              <div class="hidden-panel" data-panel="assistant">
+                <div class="placeholder-card">这里后续可以放助理行为、工具权限和审批策略设置。</div>
+              </div>
+            </section>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <template id="connectedProviderTemplate">
+      <article class="provider-row">
+        <div class="provider-top">
+          <div class="provider-name-wrap">
+            <div class="provider-name"></div>
+            <div class="provider-desc"></div>
+          </div>
+          <div class="provider-actions">
+            <span class="pill success provider-status">已连接</span>
+            <button class="ghost-btn test-btn">测试连接</button>
+            <button class="ghost-btn toggle-btn">编辑</button>
+            <button class="danger-btn disconnect-btn">断开连接</button>
+          </div>
+        </div>
+
+        <div class="provider-form">
+          <div class="provider-form-grid">
+            <div class="field">
+              <label>接口地址</label>
+              <input class="base-url-input" />
+            </div>
+            <div class="field">
+              <label>API Key</label>
+              <input class="api-key-input" />
+            </div>
+            <div class="field">
+              <label>默认模型</label>
+              <select class="default-model-select"></select>
+            </div>
+            <div class="field full">
+              <label>可选模型列表</label>
+              <textarea class="models-input"></textarea>
+            </div>
+          </div>
+
+          <div class="inline-note test-result">点击“测试连接”查看这个渠道是否可正常请求。</div>
+        </div>
+      </article>
+    </template>
+
+    <template id="availableProviderTemplate">
+      <article class="provider-option">
+        <div class="provider-option-top">
+          <div class="provider-name-wrap">
+            <div class="provider-name"></div>
+            <div class="provider-desc"></div>
+          </div>
+          <button class="ghost-btn connect-btn">+ 连接</button>
+        </div>
+      </article>
+    </template>
+
+    <script>
+      const providerCatalog = {
+        minimax: {
+          name: "MiniMax",
+          description: "国内通用模型渠道，适合默认办公和通用问答。",
+          baseUrl: "https://api.minimaxi.com/v1",
+          apiKey: "mmx-************",
+          models: ["MiniMax-M2.7", "MiniMax-Text-01"],
+          connected: true,
+        },
+        openrouter: {
+          name: "OpenRouter",
+          description: "一个入口接多个模型，适合做默认主力渠道。",
+          baseUrl: "https://openrouter.ai/api/v1",
+          apiKey: "sk-or-************",
+          models: ["gpt-4o-mini", "deepseek-chat", "gemini-2.5-flash-preview"],
+          connected: true,
+        },
+        ollama: {
+          name: "Ollama",
+          description: "本地模型服务，不依赖云端 API Key。",
+          baseUrl: "http://localhost:11434/v1",
+          apiKey: "",
+          models: ["llama3.1", "qwen2.5-coder"],
+          connected: true,
+        },
+        openai: {
+          name: "OpenAI",
+          description: "官方 GPT 渠道，适合直接接入标准 OpenAI 模型。",
+          baseUrl: "https://api.openai.com/v1",
+          apiKey: "",
+          models: ["gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"],
+          connected: false,
+        },
+        deepseek: {
+          name: "DeepSeek",
+          description: "适合代码和推理场景，可手动维护你要显示的模型。",
+          baseUrl: "https://api.deepseek.com/v1",
+          apiKey: "",
+          models: ["deepseek-chat", "deepseek-reasoner"],
+          connected: false,
+        },
+        glm: {
+          name: "GLM",
+          description: "智谱渠道，可维护你常用的 GLM 模型列表。",
+          baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+          apiKey: "",
+          models: ["glm-4-air", "glm-4.5"],
+          connected: false,
+        },
+        custom: {
+          name: "OpenAI-Compatible",
+          description: "自定义兼容 OpenAI 接口的第三方渠道。",
+          baseUrl: "https://your-openai-compatible-endpoint/v1",
+          apiKey: "",
+          models: ["your-model-1"],
+          connected: false,
+        },
+      }
+
+      const state = {
+        activeTab: "providers",
+        defaultProvider: "openrouter",
+        defaultModel: "gpt-4o-mini",
+        expandedProviderId: "openrouter",
+      }
+
+      const navButtons = Array.from(document.querySelectorAll(".settings-nav-item"))
+      const panels = Array.from(document.querySelectorAll("[data-panel]"))
+      const defaultProviderEl = document.getElementById("defaultProvider")
+      const defaultModelEl = document.getElementById("defaultModel")
+      const connectedProvidersEl = document.getElementById("connectedProviders")
+      const availableProvidersEl = document.getElementById("availableProviders")
+      const composerChipEl = document.getElementById("composerChip")
+      const composerSummaryEl = document.getElementById("composerSummary")
+      const connectedCountPillEl = document.getElementById("connectedCountPill")
+      const availableCountPillEl = document.getElementById("availableCountPill")
+      const defaultSummaryPillEl = document.getElementById("defaultSummaryPill")
+      const diagProviderEl = document.getElementById("diagProvider")
+      const diagModelEl = document.getElementById("diagModel")
+      const diagTimeEl = document.getElementById("diagTime")
+      const diagStatusEl = document.getElementById("diagStatus")
+      const diagTipEl = document.getElementById("diagTip")
+
+      function getConnectedIds() {
+        return Object.keys(providerCatalog).filter((id) => providerCatalog[id].connected)
+      }
+
+      function getAvailableIds() {
+        return Object.keys(providerCatalog).filter((id) => !providerCatalog[id].connected)
+      }
+
+      function populateDefaultProviderOptions() {
+        defaultProviderEl.innerHTML = ""
+        getConnectedIds().forEach((providerId) => {
+          const option = document.createElement("option")
+          option.value = providerId
+          option.textContent = providerCatalog[providerId].name
+          defaultProviderEl.appendChild(option)
+        })
+        defaultProviderEl.value = state.defaultProvider
+      }
+
+      function populateDefaultModelOptions() {
+        const provider = providerCatalog[state.defaultProvider]
+        const previousModel = state.defaultModel
+        defaultModelEl.innerHTML = ""
+        provider.models.forEach((model) => {
+          const option = document.createElement("option")
+          option.value = model
+          option.textContent = model
+          defaultModelEl.appendChild(option)
+        })
+        state.defaultModel = provider.models.includes(previousModel) ? previousModel : provider.models[0]
+        defaultModelEl.value = state.defaultModel
+      }
+
+      function renderConnectedProviders() {
+        connectedProvidersEl.innerHTML = ""
+        getConnectedIds().forEach((providerId) => {
+          const provider = providerCatalog[providerId]
+          const node = document.getElementById("connectedProviderTemplate").content.firstElementChild.cloneNode(true)
+          node.querySelector(".provider-name").textContent = provider.name
+          node.querySelector(".provider-desc").textContent = provider.description
+          node.querySelector(".base-url-input").value = provider.baseUrl
+          node.querySelector(".api-key-input").value = provider.apiKey
+          node.querySelector(".models-input").value = provider.models.join("\n")
+
+          const modelSelect = node.querySelector(".default-model-select")
+          provider.models.forEach((model) => {
+            const option = document.createElement("option")
+            option.value = model
+            option.textContent = model
+            modelSelect.appendChild(option)
+          })
+          modelSelect.value = provider.models[0]
+
+          const formEl = node.querySelector(".provider-form")
+          if (state.expandedProviderId === providerId) {
+            formEl.classList.add("visible")
+          }
+
+          node.querySelector(".toggle-btn").addEventListener("click", () => {
+            state.expandedProviderId = state.expandedProviderId === providerId ? "" : providerId
+            render()
+          })
+
+          node.querySelector(".disconnect-btn").addEventListener("click", () => {
+            provider.connected = false
+            if (state.defaultProvider === providerId) {
+              const fallbackId = getConnectedIds().filter((id) => id !== providerId)[0]
+              state.defaultProvider = fallbackId || ""
+              state.defaultModel = fallbackId ? providerCatalog[fallbackId].models[0] : ""
+            }
+            state.expandedProviderId = ""
+            render()
+          })
+
+          node.querySelector(".test-btn").addEventListener("click", () => {
+            const resultEl = node.querySelector(".test-result")
+            resultEl.textContent =
+              "连接测试成功：已模拟完成 1 次最小请求，" + provider.name + " 可正常读取模型列表。"
+            resultEl.style.color = "var(--success)"
+            resultEl.style.borderStyle = "solid"
+            resultEl.style.borderColor = "#bbf7d0"
+            resultEl.style.background = "var(--success-soft)"
+          })
+
+          modelSelect.addEventListener("change", (event) => {
+            const value = event.target.value
+            if (state.defaultProvider === providerId) {
+              state.defaultModel = value
+              syncSummary()
+            }
+          })
+
+          connectedProvidersEl.appendChild(node)
+        })
+      }
+
+      function renderAvailableProviders() {
+        availableProvidersEl.innerHTML = ""
+        getAvailableIds().forEach((providerId) => {
+          const provider = providerCatalog[providerId]
+          const node = document.getElementById("availableProviderTemplate").content.firstElementChild.cloneNode(true)
+          node.querySelector(".provider-name").textContent = provider.name
+          node.querySelector(".provider-desc").textContent = provider.description
+          node.querySelector(".connect-btn").addEventListener("click", () => {
+            provider.connected = true
+            state.expandedProviderId = providerId
+            if (!state.defaultProvider) {
+              state.defaultProvider = providerId
+              state.defaultModel = provider.models[0]
+            }
+            render()
+          })
+          availableProvidersEl.appendChild(node)
+        })
+      }
+
+      function renderTabs() {
+        navButtons.forEach((button) => {
+          const isActive = button.dataset.tab === state.activeTab
+          button.classList.toggle("active", isActive)
+        })
+        panels.forEach((panel) => {
+          panel.classList.toggle("visible", panel.dataset.panel === state.activeTab)
+        })
+      }
+
+      function syncSummary() {
+        const provider = providerCatalog[state.defaultProvider]
+        const providerName = provider ? provider.name : "未设置"
+        const modelName = state.defaultModel || "未设置"
+        composerChipEl.textContent = modelName + " ▾"
+        composerSummaryEl.textContent = "新对话会默认使用 " + providerName + " / " + modelName
+        defaultSummaryPillEl.textContent = "当前：" + providerName + " / " + modelName
+        diagProviderEl.textContent = providerName
+        diagModelEl.textContent = modelName
+        connectedCountPillEl.textContent = "已连接 " + getConnectedIds().length + " 个"
+        availableCountPillEl.textContent = "待添加 " + getAvailableIds().length + " 个"
+      }
+
+      function render() {
+        if (!state.defaultProvider || !providerCatalog[state.defaultProvider]?.connected) {
+          state.defaultProvider = getConnectedIds()[0] || ""
+        }
+        populateDefaultProviderOptions()
+        populateDefaultModelOptions()
+        renderConnectedProviders()
+        renderAvailableProviders()
+        renderTabs()
+        syncSummary()
+      }
+
+      navButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          state.activeTab = button.dataset.tab
+          renderTabs()
+        })
+      })
+
+      defaultProviderEl.addEventListener("change", (event) => {
+        state.defaultProvider = event.target.value
+        populateDefaultModelOptions()
+        syncSummary()
+      })
+
+      defaultModelEl.addEventListener("change", (event) => {
+        state.defaultModel = event.target.value
+        syncSummary()
+      })
+
+      document.getElementById("saveDefaultBtn").addEventListener("click", () => {
+        defaultSummaryPillEl.textContent =
+          "已保存：" + providerCatalog[state.defaultProvider].name + " / " + state.defaultModel
+      })
+
+      document.getElementById("runDiagnosticBtn").addEventListener("click", () => {
+        const now = new Date()
+        const time = now.getHours().toString().padStart(2, "0") + ":" + now.getMinutes().toString().padStart(2, "0")
+        diagTimeEl.textContent = time
+        diagStatusEl.textContent = "诊断通过"
+        diagStatusEl.className = "pill success"
+        diagTipEl.textContent =
+          "默认渠道 " +
+          providerCatalog[state.defaultProvider].name +
+          " 已响应，默认模型 " +
+          state.defaultModel +
+          " 可用于新会话。"
+      })
+
+      composerChipEl.addEventListener("click", () => {
+        state.activeTab = "providers"
+        state.expandedProviderId = state.defaultProvider
+        render()
+      })
+
+      render()
+    </script>
+  </body>
+</html>

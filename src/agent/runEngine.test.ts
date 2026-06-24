@@ -175,4 +175,63 @@ describe('runEngine', () => {
     expect(result.pendingApproval.reason).toContain('workspace')
     expect(result.pendingApproval.summary).toContain('workspace')
   })
+
+  it('emits a plan_updated event when update_plan succeeds', async () => {
+    const tools = createToolRegistry()
+    tools.register({
+      name: 'update_plan',
+      description: 'update plan',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          steps: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                title: { type: 'string' },
+                status: { type: 'string' },
+              },
+              required: ['id', 'title', 'status'],
+            },
+          },
+        },
+        required: ['steps'],
+      },
+      policy: { riskLevel: 'safe' },
+      handler: vi.fn(async (args) => ({ ok: true as const, data: args })),
+    })
+
+    const chatCompletion = vi
+      .fn()
+      .mockResolvedValueOnce({
+        kind: 'tool_calls' as const,
+        tool_calls: [
+          {
+            id: 'call_plan',
+            type: 'function' as const,
+            function: {
+              name: 'update_plan',
+              arguments: '{"steps":[{"id":"context","title":"Read files","status":"completed"}]}',
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ kind: 'content' as const, content: 'done' })
+
+    const result = await runEngine({
+      messages: [{ role: 'user', content: 'make a plan' }],
+      tools,
+      chatCompletion,
+      maxTurns: 5,
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected ok')
+    expect(result.timeline).toContainEqual({
+      type: 'plan_updated',
+      steps: [{ id: 'context', title: 'Read files', status: 'completed' }],
+    })
+  })
 })

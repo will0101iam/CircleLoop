@@ -47,6 +47,8 @@ describe('loadMinimaxConfig', () => {
       expect(status.baseUrl).toBe('https://api.minimaxi.com/v1')
       expect(status.model).toBe('MiniMax-M2.7')
       expect(status.getApiKey()).toBe(apiKey)
+      expect(status.defaults).toEqual({ provider: 'minimax', model: 'MiniMax-M2.7' })
+      expect(status.providers.minimax?.models).toEqual(['MiniMax-M2.7'])
 
       const json = JSON.stringify(status)
       expect(json).not.toContain(apiKey)
@@ -80,18 +82,85 @@ describe('loadMinimaxConfig', () => {
     )
     expect(status.getApiKey()).toBe(null)
   })
+
+  it('loads multi-provider config and resolves defaults through provider registry', async () => {
+    const readTextFile = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        defaults: {
+          provider: 'openrouter',
+          model: 'gpt-4o-mini',
+        },
+        providers: {
+          minimax: {
+            label: 'MiniMax',
+            baseUrl: 'https://api.minimaxi.com/v1',
+            apiKey: 'mini-secret',
+            models: ['MiniMax-M2.7'],
+            defaultModel: 'MiniMax-M2.7',
+          },
+          openrouter: {
+            label: 'OpenRouter',
+            baseUrl: 'https://openrouter.ai/api/v1',
+            apiKey: 'or-secret',
+            models: ['gpt-4o-mini', 'deepseek-chat'],
+            defaultModel: 'gpt-4o-mini',
+          },
+          ollama: {
+            label: 'Ollama',
+            baseUrl: 'http://localhost:11434/v1',
+            models: ['llama3.1'],
+            defaultModel: 'llama3.1',
+          },
+        },
+      }),
+    )
+
+    const status = await loadMinimaxConfig({
+      isTauri: () => true,
+      readTextFile,
+      appConfigDir: async () => '/Users/alice/Library/Application Support/com.example.app',
+      join: (...parts) => parts.join('/'),
+    })
+
+    expect(status.configured).toBe(true)
+    expect(status.provider).toBe('openrouter')
+    expect(status.baseUrl).toBe('https://openrouter.ai/api/v1')
+    expect(status.model).toBe('gpt-4o-mini')
+    expect(status.getApiKey()).toBe('or-secret')
+    expect(status.getApiKey('minimax')).toBe('mini-secret')
+    expect(status.getApiKey('ollama')).toBe(null)
+    expect(status.providers.openrouter?.models).toEqual(['gpt-4o-mini', 'deepseek-chat'])
+    expect(status.providers.ollama?.defaultModel).toBe('llama3.1')
+  })
 })
 
 describe('saveMinimaxConfig', () => {
-  it('writes config to app config directory', async () => {
+  it('writes multi-provider config to app config directory', async () => {
     const writeTextFile = vi.fn().mockResolvedValue(undefined)
     const mkdir = vi.fn().mockResolvedValue(undefined)
 
     await saveMinimaxConfig(
       {
-        baseUrl: 'https://api.minimaxi.com/v1',
-        apiKey: 'secret-999',
-        model: 'MiniMax-M2.7',
+        defaults: {
+          provider: 'openrouter',
+          model: 'gpt-4o-mini',
+        },
+        providers: {
+          minimax: {
+            label: 'MiniMax',
+            baseUrl: 'https://api.minimaxi.com/v1',
+            apiKey: 'secret-999',
+            models: ['MiniMax-M2.7'],
+            defaultModel: 'MiniMax-M2.7',
+          },
+          openrouter: {
+            label: 'OpenRouter',
+            baseUrl: 'https://openrouter.ai/api/v1',
+            apiKey: 'or-key',
+            models: ['gpt-4o-mini', 'deepseek-chat'],
+            defaultModel: 'gpt-4o-mini',
+          },
+        },
       },
       {
         isTauri: () => true,
@@ -102,5 +171,8 @@ describe('saveMinimaxConfig', () => {
 
     expect(mkdir).toHaveBeenCalledWith('circleloop', expect.any(Object))
     expect(writeTextFile).toHaveBeenCalledWith('circleloop/config.json', expect.any(String), expect.any(Object))
+    const savedJson = JSON.parse(writeTextFile.mock.calls[0][1])
+    expect(savedJson.defaults.provider).toBe('openrouter')
+    expect(savedJson.providers.openrouter.models).toEqual(['gpt-4o-mini', 'deepseek-chat'])
   })
 })

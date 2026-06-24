@@ -5,6 +5,8 @@ import {
   appendRunAnswerText,
   appendRunEvent,
   completeRunMessage,
+  createDefaultTaskPlanEvents,
+  createRunEventFromEngineTimeline,
   createAssistantMessage,
   createPendingRunMessage,
   createUserMessage,
@@ -73,6 +75,45 @@ describe('runMessages', () => {
     expect((updated[1] as Extract<(typeof updated)[number], { kind: 'run' }>).events).toEqual([
       expect.objectContaining({ kind: 'tool_result', phase: 'answer', anchor: 'answer' }),
     ])
+  })
+
+  it('creates and appends default task plan events in order', () => {
+    const initial = appendRunMessages([], createUserMessage('u1', 'task', '10:00'), createPendingRunMessage('r1', '10:00'))
+    const events = createDefaultTaskPlanEvents('r1')
+
+    const updated = events.reduce((messages, event) => appendRunEvent(messages, 'r1', event), initial)
+
+    expect((updated[1] as Extract<(typeof updated)[number], { kind: 'run' }>).events).toEqual([
+      expect.objectContaining({ id: 'r1:plan:created', kind: 'plan_created' }),
+      expect.objectContaining({ id: 'r1:plan:step:understand:start', kind: 'plan_step_started', stepId: 'understand' }),
+      expect.objectContaining({ id: 'r1:plan:step:understand:complete', kind: 'plan_step_completed', stepId: 'understand' }),
+      expect.objectContaining({ id: 'r1:plan:step:context:start', kind: 'plan_step_started', stepId: 'context' }),
+    ])
+  })
+
+  it('maps engine plan updates to visible run plan events', () => {
+    const event = createRunEventFromEngineTimeline({
+      runId: 'r1',
+      idPrefix: 'r1',
+      sequence: 3,
+      event: {
+        type: 'plan_updated',
+        steps: [
+          { id: 'context', title: '检查现有代码', status: 'completed', summary: '已定位入口' },
+          { id: 'edit', title: '修改实现', status: 'active' },
+        ],
+      },
+    })
+
+    expect(event).toEqual({
+      id: 'r1:plan-updated:3',
+      kind: 'plan_updated',
+      phase: 'thinking',
+      steps: [
+        { id: 'context', title: '检查现有代码', status: 'completed', summary: '已定位入口' },
+        { id: 'edit', title: '修改实现', status: 'active' },
+      ],
+    })
   })
 
   it('builds answer segments in the exact order of text and tool markers', () => {

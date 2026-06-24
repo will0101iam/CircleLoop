@@ -8,6 +8,8 @@ export type ChatSummaryRecord = {
   workspacePath: string | null
   pinnedAt?: number | null
   lastActivatedAt?: number
+  llmProvider?: string | null
+  llmModel?: string | null
 }
 
 export function createChatThreadStore(deps?: {
@@ -34,10 +36,12 @@ export function createChatThreadStore(deps?: {
             workspacePath: string | null
             pinnedAt: number | null
             lastActivatedAt: number | null
+            llmProvider: string | null
+            llmModel: string | null
             messagesJson: string
           }>[number]
         >(
-          'select id, title, workspace_path as workspacePath, pinned_at as pinnedAt, last_activated_at as lastActivatedAt, messages_json as messagesJson from chat_threads order by updated_at desc',
+          'select id, title, workspace_path as workspacePath, pinned_at as pinnedAt, last_activated_at as lastActivatedAt, llm_provider as llmProvider, llm_model as llmModel, messages_json as messagesJson from chat_threads order by updated_at desc',
           [],
         )) ?? []
 
@@ -47,6 +51,8 @@ export function createChatThreadStore(deps?: {
         workspacePath: row.workspacePath ?? null,
         pinnedAt: row.pinnedAt ?? null,
         lastActivatedAt: row.lastActivatedAt ?? undefined,
+        llmProvider: row.llmProvider ?? null,
+        llmModel: row.llmModel ?? null,
       }))
       const chatMessages = Object.fromEntries(
         rows.map((row) => {
@@ -74,12 +80,14 @@ export function createChatThreadStore(deps?: {
             workspacePath: string | null
             pinnedAt: number | null
             lastActivatedAt: number | null
+            llmProvider: string | null
+            llmModel: string | null
             messagesJson: string
             createdAt: number
             updatedAt: number
           }>[number]
         >(
-          'select id, title, workspace_path as workspacePath, pinned_at as pinnedAt, last_activated_at as lastActivatedAt, messages_json as messagesJson, created_at as createdAt, updated_at as updatedAt from chat_threads',
+          'select id, title, workspace_path as workspacePath, pinned_at as pinnedAt, last_activated_at as lastActivatedAt, llm_provider as llmProvider, llm_model as llmModel, messages_json as messagesJson, created_at as createdAt, updated_at as updatedAt from chat_threads',
           [],
         )) ?? []
       const existingById = new Map(existingRows.map((row) => [row.id, row]))
@@ -100,12 +108,25 @@ export function createChatThreadStore(deps?: {
           existing.workspacePath === chat.workspacePath &&
           (existing.pinnedAt ?? null) === (chat.pinnedAt ?? null) &&
           (existing.lastActivatedAt ?? null) === (chat.lastActivatedAt ?? null) &&
+          (existing.llmProvider ?? null) === (chat.llmProvider ?? null) &&
+          (existing.llmModel ?? null) === (chat.llmModel ?? null) &&
           existing.messagesJson === messagesJson
         const createdAt = existing?.createdAt ?? now
         const updatedAt = unchanged ? existing.updatedAt : now
         await deps.db.run(
-          'insert or replace into chat_threads (id, title, workspace_path, pinned_at, last_activated_at, messages_json, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)',
-          [chat.id, chat.title, chat.workspacePath, chat.pinnedAt ?? null, chat.lastActivatedAt ?? null, messagesJson, createdAt, updatedAt],
+          'insert or replace into chat_threads (id, title, workspace_path, pinned_at, last_activated_at, llm_provider, llm_model, messages_json, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [
+            chat.id,
+            chat.title,
+            chat.workspacePath,
+            chat.pinnedAt ?? null,
+            chat.lastActivatedAt ?? null,
+            chat.llmProvider ?? null,
+            chat.llmModel ?? null,
+            messagesJson,
+            createdAt,
+            updatedAt,
+          ],
         )
       }
     },

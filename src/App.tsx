@@ -8,13 +8,44 @@ import { createTauriFileOps } from './tauri/tauriFileOps'
 import { createRuntime } from './runtime/runtime'
 import { isTauri } from './tauri/isTauri'
 import { createJournaledFileOps, rollbackEntries, type FileRollbackEntry } from './app/fileRollback'
-import { loadMinimaxConfig, saveMinimaxConfig, type MinimaxConfigStatus } from './config/config'
+import {
+  createEmptyMinimaxConfigStatus,
+  loadMinimaxConfig,
+  saveMinimaxConfig,
+  type LlmProviderConfig,
+  type MinimaxConfigStatus,
+} from './config/config'
+import AnthropicIcon from '@lobehub/icons/es/Anthropic/components/Mono'
+import BailianIcon from '@lobehub/icons/es/Bailian/components/Mono'
+import BedrockIcon from '@lobehub/icons/es/Bedrock/components/Mono'
+import ChatGLMIcon from '@lobehub/icons/es/ChatGLM/components/Mono'
+import DeepSeekIcon from '@lobehub/icons/es/DeepSeek/components/Mono'
+import GoogleIcon from '@lobehub/icons/es/Google/components/Mono'
+import KimiIcon from '@lobehub/icons/es/Kimi/components/Mono'
+import LlmApiIcon from '@lobehub/icons/es/LlmApi/components/Mono'
+import MinimaxIcon from '@lobehub/icons/es/Minimax/components/Mono'
+import MoonshotIcon from '@lobehub/icons/es/Moonshot/components/Mono'
+import OllamaIcon from '@lobehub/icons/es/Ollama/components/Mono'
+import OpenAIIcon from '@lobehub/icons/es/OpenAI/components/Mono'
+import OpenRouterIcon from '@lobehub/icons/es/OpenRouter/components/Mono'
+import VolcengineIcon from '@lobehub/icons/es/Volcengine/components/Mono'
+import XiaomiMiMoIcon from '@lobehub/icons/es/XiaomiMiMo/components/Mono'
 import {
   createChatCompletionOpenAICompat,
   createChatCompletionStreamOpenAICompat,
   type OpenAICompatChatMessage,
   type OpenAICompatTool,
 } from './llm/openaiCompat'
+import { resolveProviderRuntime } from './llm/providerRuntime'
+import {
+  getAvailableProviderIds,
+  getConfiguredProviderIds,
+  getModelPickerProviderIds,
+  parseModelsText,
+  testProviderConnection,
+  validateProviderSettingsSave,
+  type ProviderSettingsDraft,
+} from './llm/providerSettings'
 import { runEngine, resumeRunEngineWithApproval, type PendingApprovalState } from './agent/runEngine'
 import { sanitizeThink } from './app/sanitizeThink'
 import { formatToolPayloadPreview } from './app/formatToolPayload'
@@ -33,31 +64,35 @@ import {
   shouldTriggerFinalScroll,
 } from './app/threadFollowPolicy'
 import { compressContextWithMinimax, type CompressionSummary, renderCompressionSummaryMessage } from './context/contextCompressor'
-import { Copy, FolderOpen, MoreHorizontal, Pencil, Pin, RotateCcw, Square, Trash2, Undo2 } from 'lucide-react'
+import { Copy, FolderOpen, Link2, MoreHorizontal, Pencil, Pin, RotateCcw, SlidersHorizontal, Square, Trash2, Undo2 } from 'lucide-react'
 import {
   appendRunMessages,
   appendRunEvent,
   appendRunAnswerMarker,
   appendRunAnswerText,
   completeRunMessage,
+  createDefaultTaskPlanEvents,
   createPendingRunMessage,
+  createRunEventFromEngineTimeline,
   createAssistantMessage,
   createUserMessage,
+  type RunMode,
   type RunEvent,
   type RunThreadMessage,
   type ThreadMessage,
 } from './app/runMessages'
-import { PlusIcon, TaskIcon, CustomizeIcon, ChevronDownIcon } from './components/Icons'
+import { AttachIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, CustomizeIcon, PlusIcon, TaskIcon } from './components/Icons'
 import { getUsableContextCharBudget } from './llm/modelContextBudget'
 
 const SYSTEM_PROMPT =
-  'You are circleloop, a coding agent. Use tools when needed. Keep answers concise and precise.'
+  'You are circleloop, a coding agent. Use tools when needed. Keep answers concise and precise. Use update_plan to keep the visible task checklist current when your plan or step status changes.'
 
 type PendingApprovalRecord = {
   chatId: string
   runId: string
   approval: PendingApprovalState
   config: {
+    provider: string
     baseUrl: string
     model: string
     apiKey: string
@@ -80,6 +115,9 @@ type ProcessStepItem = {
   approvalResolved?: Extract<ApprovalEvent, { kind: 'approval_resolved' }>
   resultPreview?: string | null
 }
+type SettingsTab = 'general' | 'providers' | 'skills' | 'mcp' | 'usage' | 'assistant'
+type MainView = 'chat' | 'settings'
+type SettingsProviderDialogState = { providerId: string; mode: 'connect' | 'edit' } | null
 
 type ChatThreadStoreLike = ReturnType<typeof createChatThreadStore>
 type ChatSummary = {
@@ -88,12 +126,25 @@ type ChatSummary = {
   workspacePath: string | null
   pinnedAt?: number | null
   lastActivatedAt?: number
+  llmProvider?: string | null
+  llmModel?: string | null
+}
+
+function createPlannedPendingRunMessage(
+  id: string,
+  time: string,
+  mode: RunMode = 'normal',
+  llm?: { provider?: string | null; model?: string | null },
+) {
+  const run = createPendingRunMessage(id, time, mode, llm)
+  return { ...run, events: createDefaultTaskPlanEvents(id) }
 }
 
 type TestInitialState = {
   chats: ChatSummary[]
   selectedChatId: string
   chatMessages: Record<string, ThreadMessage[]>
+  configStatus?: MinimaxConfigStatus
   disableAutoRuntime?: boolean
   runningChatId?: string | null
   activeRunId?: string | null
@@ -142,15 +193,195 @@ function chunkMessagesForCompression(messages: OpenAICompatChatMessage[], maxCha
 
 function upsertRecentChat(
   chats: ChatSummary[],
-  input: { id: string; title?: string; workspacePath?: string | null; pinnedAt?: number | null; lastActivatedAt?: number },
+  input: {
+    id: string
+    title?: string
+    workspacePath?: string | null
+    pinnedAt?: number | null
+    lastActivatedAt?: number
+    llmProvider?: string | null
+    llmModel?: string | null
+  },
 ) {
   const existing = chats.find((chat) => chat.id === input.id)
   const title = input.title ?? existing?.title ?? 'New Chat'
   const workspacePath = input.workspacePath === undefined ? (existing?.workspacePath ?? null) : input.workspacePath
   const pinnedAt = input.pinnedAt === undefined ? (existing?.pinnedAt ?? null) : input.pinnedAt
   const lastActivatedAt = input.lastActivatedAt ?? existing?.lastActivatedAt ?? Date.now()
+  const llmProvider = input.llmProvider === undefined ? (existing?.llmProvider ?? null) : input.llmProvider
+  const llmModel = input.llmModel === undefined ? (existing?.llmModel ?? null) : input.llmModel
   const rest = chats.filter((chat) => chat.id !== input.id)
-  return [{ id: input.id, title, workspacePath, pinnedAt, lastActivatedAt }, ...rest]
+  return [{ id: input.id, title, workspacePath, pinnedAt, lastActivatedAt, llmProvider, llmModel }, ...rest]
+}
+
+function providerOrder(providers: Record<string, LlmProviderConfig>) {
+  const preferred = [
+    'anthropic-official',
+    'anthropic-thirdparty',
+    'openrouter',
+    'glm-cn',
+    'glm-global',
+    'kimi',
+    'moonshot',
+    'minimax-cn',
+    'minimax-global',
+    'volcengine',
+    'xiaomi-mimo',
+    'xiaomi-mimo-token-plan',
+    'bailian',
+    'bedrock',
+    'vertex',
+    'ollama',
+    'litellm',
+    'minimax',
+    'openai',
+    'deepseek',
+    'glm',
+    'custom',
+  ]
+  const extras = Object.keys(providers).filter((providerId) => !preferred.includes(providerId))
+  return [...preferred.filter((providerId) => providerId in providers), ...extras]
+}
+
+const CODEPILOT_CHAT_PROVIDER_IDS = new Set([
+  'anthropic-official',
+  'anthropic-thirdparty',
+  'openrouter',
+  'deepseek',
+  'glm-cn',
+  'glm-global',
+  'kimi',
+  'moonshot',
+  'minimax-cn',
+  'minimax-global',
+  'volcengine',
+  'xiaomi-mimo',
+  'xiaomi-mimo-token-plan',
+  'bailian',
+  'bedrock',
+  'vertex',
+  'ollama',
+  'litellm',
+])
+
+const CONNECTABLE_PROVIDER_IDS = new Set([
+  'openrouter',
+  'deepseek',
+  'glm-cn',
+  'glm-global',
+  'kimi',
+  'moonshot',
+  'minimax-cn',
+  'minimax-global',
+  'volcengine',
+  'xiaomi-mimo',
+  'xiaomi-mimo-token-plan',
+  'bailian',
+  'ollama',
+  'litellm',
+])
+
+function isConnectableProvider(providerId: string) {
+  return CONNECTABLE_PROVIDER_IDS.has(providerId)
+}
+
+function getProviderDescription(providerId: string) {
+  switch (providerId) {
+    case 'anthropic-official':
+      return 'Anthropic 官方 API'
+    case 'anthropic-thirdparty':
+      return 'Anthropic 兼容第三方 API — 填写地址和密钥'
+    case 'openrouter':
+      return '通过 OpenRouter 访问多种模型'
+    case 'glm-cn':
+      return '智谱 GLM 编程套餐 — 中国区'
+    case 'glm-global':
+      return '智谱 GLM 编程套餐 — 国际区'
+    case 'kimi':
+      return 'Kimi 编程计划 API'
+    case 'moonshot':
+      return '月之暗面 API'
+    case 'minimax-cn':
+      return 'MiniMax 编程套餐 — 中国区'
+    case 'minimax-global':
+      return 'MiniMax 编程套餐 — 国际区'
+    case 'volcengine':
+      return '字节火山方舟 Coding Plan — 豆包、GLM、DeepSeek、Kimi'
+    case 'xiaomi-mimo':
+      return '小米 MiMo 按量付费 — MiMo-V2-Pro'
+    case 'xiaomi-mimo-token-plan':
+      return '小米 MiMo Token Plan 订阅套餐 — MiMo-V2-Pro'
+    case 'bailian':
+      return '阿里云百炼 Coding Plan — 通义千问、GLM、Kimi、MiniMax'
+    case 'bedrock':
+      return 'Amazon Bedrock — 需要 AWS 凭证'
+    case 'vertex':
+      return 'Google Vertex AI — 需要 GCP 凭证'
+    case 'ollama':
+      return 'Ollama — 本地运行模型，Anthropic 兼容 API'
+    case 'litellm':
+      return 'LiteLLM 代理 — 本地或远程'
+    case 'minimax':
+      return 'MiniMax OpenAI-compatible API'
+    case 'openai':
+      return 'OpenAI 官方 API'
+    case 'deepseek':
+      return 'DeepSeek OpenAI-compatible API'
+    case 'glm':
+      return 'GLM OpenAI-compatible API'
+    case 'custom':
+      return '自定义 OpenAI-compatible 渠道'
+    default:
+      return '填写连接地址、密钥和手动维护的 models 后即可使用。'
+  }
+}
+
+function ProviderIcon(props: { providerId: string; label: string }) {
+  const icons = {
+    'anthropic-official': AnthropicIcon,
+    'anthropic-thirdparty': AnthropicIcon,
+    minimax: MinimaxIcon,
+    'minimax-cn': MinimaxIcon,
+    'minimax-global': MinimaxIcon,
+    openai: OpenAIIcon,
+    openrouter: OpenRouterIcon,
+    deepseek: DeepSeekIcon,
+    glm: ChatGLMIcon,
+    'glm-cn': ChatGLMIcon,
+    'glm-global': ChatGLMIcon,
+    kimi: KimiIcon,
+    moonshot: MoonshotIcon,
+    volcengine: VolcengineIcon,
+    'xiaomi-mimo': XiaomiMiMoIcon,
+    'xiaomi-mimo-token-plan': XiaomiMiMoIcon,
+    bailian: BailianIcon,
+    bedrock: BedrockIcon,
+    vertex: GoogleIcon,
+    ollama: OllamaIcon,
+    litellm: LlmApiIcon,
+    custom: LlmApiIcon,
+  } as const
+  const Icon = icons[props.providerId as keyof typeof icons] ?? LlmApiIcon
+  return (
+    <span className="mira-provider-row-mark" data-testid={`provider-icon-${props.providerId}`} title={props.label}>
+      <Icon size={22} aria-hidden="true" />
+    </span>
+  )
+}
+
+function toProviderSettingsDrafts(providers: Record<string, LlmProviderConfig>): Record<string, ProviderSettingsDraft> {
+  return Object.fromEntries(
+    Object.entries(providers).map(([providerId, provider]) => [
+      providerId,
+      {
+        label: provider.label,
+        baseUrl: provider.baseUrl ?? '',
+        apiKey: provider.apiKey ?? '',
+        defaultModel: provider.defaultModel ?? '',
+        modelsText: provider.models.join('\n'),
+      },
+    ]),
+  )
 }
 
 function App(props?: { __testInitialState?: TestInitialState }) {
@@ -161,23 +392,32 @@ function App(props?: { __testInitialState?: TestInitialState }) {
   const fileRollbackJournalRef = useRef<Record<string, FileRollbackEntry[]>>({})
   const [prompt, setPrompt] = useState<string>('')
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [showModelSettings, setShowModelSettings] = useState(false)
-  const [settingsBaseUrl, setSettingsBaseUrl] = useState('https://api.minimaxi.com/v1')
-  const [settingsModel, setSettingsModel] = useState('MiniMax-M2.7')
-  const [settingsApiKey, setSettingsApiKey] = useState('')
+  const [activeView, setActiveView] = useState<MainView>('chat')
+  const [settingsDefaultProvider, setSettingsDefaultProvider] = useState<string>('minimax')
+  const [settingsDefaultModel, setSettingsDefaultModel] = useState<string>('MiniMax-M2.7')
+  const [settingsProviders, setSettingsProviders] = useState<Record<string, ProviderSettingsDraft>>({})
   const [settingsSaving, setSettingsSaving] = useState(false)
+  const [settingsProviderDialog, setSettingsProviderDialog] = useState<SettingsProviderDialogState>(null)
+  const [settingsDisconnectProviderId, setSettingsDisconnectProviderId] = useState<string | null>(null)
+  const [settingsDefaultModelPickerOpen, setSettingsDefaultModelPickerOpen] = useState(false)
+  const [settingsConnectionStatus, setSettingsConnectionStatus] = useState<Record<string, { tone: 'success' | 'error'; message: string }>>({})
+  const [settingsTestingProvider, setSettingsTestingProvider] = useState<string | null>(null)
+  const [settingsActiveTab, setSettingsActiveTab] = useState<SettingsTab>('providers')
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
 
   const [runtime, setRuntime] = useState<Awaited<ReturnType<typeof createRuntime>> | null>(null)
   const [chatStore, setChatStore] = useState<ChatThreadStoreLike | null>(null)
   const [chatStoreHydrated, setChatStoreHydrated] = useState(false)
-  const [configStatus, setConfigStatus] = useState<MinimaxConfigStatus>({
-    configured: false,
-    configPath: null,
-    provider: null,
-    baseUrl: null,
-    model: null,
-    getApiKey: () => null,
-  })
+  const [configStatus, setConfigStatus] = useState<MinimaxConfigStatus>(
+    props?.__testInitialState?.configStatus ?? createEmptyMinimaxConfigStatus(),
+  )
+  const providerCatalog = useMemo(
+    () => ({
+      ...createEmptyMinimaxConfigStatus().providers,
+      ...configStatus.providers,
+    }),
+    [configStatus.providers],
+  )
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
@@ -194,6 +434,7 @@ function App(props?: { __testInitialState?: TestInitialState }) {
   const [openChatMenuId, setOpenChatMenuId] = useState<string | null>(null)
   const threadRef = useRef<HTMLDivElement | null>(null)
   const threadBottomRef = useRef<HTMLDivElement | null>(null)
+  const modelPickerRef = useRef<HTMLDivElement | null>(null)
   const activeAbortControllerRef = useRef<AbortController | null>(null)
   const messageElementRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const processStepElementRefs = useRef<Record<string, HTMLDivElement | null>>({})
@@ -253,20 +494,17 @@ function App(props?: { __testInitialState?: TestInitialState }) {
       setConfigStatus(status)
       return status
     } catch {
-      const status = {
-        configured: false,
-        configPath: null,
-        provider: null,
-        baseUrl: null,
-        model: null,
-        getApiKey: () => null,
-      } satisfies MinimaxConfigStatus
+      const status = createEmptyMinimaxConfigStatus()
       setConfigStatus(status)
       return status
     }
   }
 
   useEffect(() => {
+    if (props?.__testInitialState?.configStatus) {
+      setConfigStatus(props.__testInitialState.configStatus)
+      return
+    }
     let cancelled = false
     ;(async () => {
       const status = await refreshConfigStatus()
@@ -279,9 +517,10 @@ function App(props?: { __testInitialState?: TestInitialState }) {
   }, [])
 
   useEffect(() => {
-    setSettingsBaseUrl(configStatus.baseUrl ?? 'https://api.minimaxi.com/v1')
-    setSettingsModel(configStatus.model ?? 'MiniMax-M2.7')
-  }, [configStatus.baseUrl, configStatus.model])
+    setSettingsDefaultProvider(configStatus.defaults.provider ?? 'minimax')
+    setSettingsDefaultModel(configStatus.defaults.model ?? '')
+    setSettingsProviders(toProviderSettingsDrafts(providerCatalog))
+  }, [configStatus.defaults.model, configStatus.defaults.provider, providerCatalog])
 
   useEffect(() => {
     let cancelled = false
@@ -330,6 +569,188 @@ function App(props?: { __testInitialState?: TestInitialState }) {
       .sort((a, b) => (b.lastActivatedAt ?? 0) - (a.lastActivatedAt ?? 0))
     return [...pinned, ...normal]
   }, [chats])
+
+  const selectedLlmRuntime = useMemo(
+    () =>
+      resolveProviderRuntime({
+        config: configStatus,
+        sessionProvider: selectedChat?.llmProvider ?? null,
+        sessionModel: selectedChat?.llmModel ?? null,
+      }),
+    [configStatus, selectedChat],
+  )
+  const composerModelLabel = selectedLlmRuntime.ok ? selectedLlmRuntime.model : configStatus.defaults.model ?? '选择模型'
+  const providerIds = useMemo(() => providerOrder(providerCatalog), [providerCatalog])
+  const configuredProviderIds = useMemo(
+    () => getConfiguredProviderIds(providerIds, settingsProviders),
+    [providerIds, settingsProviders],
+  )
+  const availableProviderIds = useMemo(
+    () => getAvailableProviderIds(providerIds, settingsProviders).filter((providerId) => CODEPILOT_CHAT_PROVIDER_IDS.has(providerId)),
+    [providerIds, settingsProviders],
+  )
+  const modelPickerProviderIds = useMemo(
+    () => getModelPickerProviderIds(providerIds, configStatus.providers, settingsProviders),
+    [providerIds, configStatus.providers, settingsProviders],
+  )
+  const settingsDefaultModelGroups = useMemo(
+    () =>
+      configuredProviderIds
+        .map((providerId) => ({
+          providerId,
+          label: settingsProviders[providerId]?.label ?? providerCatalog[providerId]?.label ?? providerId,
+          models: parseModelsText(settingsProviders[providerId]?.modelsText ?? ''),
+        }))
+        .filter((group) => group.models.length > 0),
+    [configuredProviderIds, settingsProviders, providerCatalog],
+  )
+
+  function resolveChatLlmRuntime(chatId: string, status: MinimaxConfigStatus = configStatus) {
+    const chat = chats.find((entry) => entry.id === chatId) ?? null
+    return resolveProviderRuntime({
+      config: status,
+      sessionProvider: chat?.llmProvider ?? null,
+      sessionModel: chat?.llmModel ?? null,
+    })
+  }
+
+  function handleSelectSessionModel(providerId: string, model: string) {
+    setChats((prev) =>
+      prev.map((chat) =>
+        chat.id === selectedChatId
+          ? {
+              ...chat,
+              llmProvider: providerId,
+              llmModel: model,
+              lastActivatedAt: chat.lastActivatedAt ?? Date.now(),
+            }
+          : chat,
+      ),
+    )
+    setModelPickerOpen(false)
+  }
+
+  function updateSettingsProvider(providerId: string, patch: Partial<ProviderSettingsDraft>) {
+    setSettingsProviders((prev) => ({
+      ...prev,
+      [providerId]: {
+        ...(prev[providerId] ?? { label: configStatus.providers[providerId]?.label ?? providerId, baseUrl: '', apiKey: '', defaultModel: '', modelsText: '' }),
+        ...patch,
+      },
+    }))
+  }
+
+  function buildProviderConfigs(drafts: Record<string, ProviderSettingsDraft>) {
+    return Object.fromEntries(
+      providerIds.map((providerId) => {
+        const draft = drafts[providerId]
+        const models = parseModelsText(draft?.modelsText ?? '')
+        return [
+          providerId,
+          {
+            label: draft?.label ?? providerCatalog[providerId]?.label ?? providerId,
+            baseUrl: draft?.baseUrl?.trim() || null,
+            apiKey: draft?.apiKey?.trim() || null,
+            models,
+            defaultModel: draft?.defaultModel?.trim() || models[0] || null,
+          },
+        ]
+      }),
+    )
+  }
+
+  async function persistModelSettings(input?: {
+    defaults?: { provider: string; model: string }
+    drafts?: Record<string, ProviderSettingsDraft>
+    closeDialog?: boolean
+    silentWeb?: boolean
+    allowEmptyDefaults?: boolean
+  }) {
+    try {
+      setSettingsSaving(true)
+      setErrorMessage(null)
+      const drafts = input?.drafts ?? settingsProviders
+      const defaults = input?.defaults ?? {
+        provider: settingsDefaultProvider.trim(),
+        model: settingsDefaultModel.trim(),
+      }
+      const nextProviders = buildProviderConfigs(drafts)
+
+      if (!input?.allowEmptyDefaults) {
+        const validationError = validateProviderSettingsSave({
+          defaults,
+          providerIds,
+          drafts,
+        })
+        if (validationError) {
+          setErrorMessage(validationError)
+          return false
+        }
+      }
+
+      if (!isTauri()) {
+        if (!input?.silentWeb) setErrorMessage('当前是 Web 预览模式：请用 pnpm tauri:dev 运行桌面端')
+        if (input?.closeDialog) setSettingsProviderDialog(null)
+        return false
+      }
+
+      await saveMinimaxConfig({
+        defaults,
+        providers: nextProviders,
+      })
+      await refreshConfigStatus()
+      if (input?.closeDialog) setSettingsProviderDialog(null)
+      return true
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : '保存配置失败')
+      return false
+    } finally {
+      setSettingsSaving(false)
+    }
+  }
+
+  function deleteSettingsProviderConfig(providerId: string) {
+    const current = settingsProviders[providerId] ?? {
+      label: providerCatalog[providerId]?.label ?? providerId,
+      baseUrl: '',
+      apiKey: '',
+      defaultModel: '',
+      modelsText: '',
+    }
+    const nextProviders = {
+      ...settingsProviders,
+      [providerId]: {
+        ...current,
+        baseUrl: '',
+        apiKey: '',
+        defaultModel: '',
+        modelsText: '',
+      },
+    }
+    const nextConfigured = getConfiguredProviderIds(providerIds, nextProviders)
+    setSettingsProviders(nextProviders)
+    setSettingsConnectionStatus((prev) => {
+      const next = { ...prev }
+      delete next[providerId]
+      return next
+    })
+    let nextDefaultProvider = settingsDefaultProvider
+    let nextDefaultModel = settingsDefaultModel
+    if (settingsDefaultProvider === providerId) {
+      const fallback = nextConfigured[0] ?? ''
+      const fallbackModels = parseModelsText(nextProviders[fallback]?.modelsText ?? '')
+      nextDefaultProvider = fallback
+      nextDefaultModel = fallbackModels[0] ?? ''
+      setSettingsDefaultProvider(nextDefaultProvider)
+      setSettingsDefaultModel(nextDefaultModel)
+    }
+    void persistModelSettings({
+      defaults: { provider: nextDefaultProvider, model: nextDefaultModel },
+      drafts: nextProviders,
+      silentWeb: true,
+      allowEmptyDefaults: !nextDefaultProvider || !nextDefaultModel,
+    })
+  }
 
   async function copyToClipboard(text: string) {
     const trimmed = text ?? ''
@@ -398,7 +819,10 @@ function App(props?: { __testInitialState?: TestInitialState }) {
     activeAbortControllerRef.current?.abort()
     const newRunId = `r_${Math.random().toString(16).slice(2)}`
     const nextMode = deepResearchEnabled ? 'deep_research' : 'normal'
-    const newRun = createPendingRunMessage(newRunId, now(), nextMode)
+    const newRun = createPlannedPendingRunMessage(newRunId, now(), nextMode, {
+      provider: selectedChat?.llmProvider ?? configStatus.defaults.provider,
+      model: selectedChat?.llmModel ?? configStatus.defaults.model,
+    })
     fileRollbackJournalRef.current[newRunId] = []
     pendingScrollMessageIdRef.current = pair.user.id
     followStateRef.current = beginRunFollow(newRunId)
@@ -416,17 +840,20 @@ function App(props?: { __testInitialState?: TestInitialState }) {
     setRunningChatId(selectedChatId)
     activeRunIdRef.current = newRunId
     const latestConfig = await refreshConfigStatus()
-    if (!latestConfig.configured) {
+    const resolvedRuntime = resolveChatLlmRuntime(selectedChatId, latestConfig)
+    if ('error' in resolvedRuntime) {
+      const retryRuntimeError = `${resolvedRuntime.error} 请编辑 ${configPath} 后重试。`
       setChatMessages((prev) => ({
         ...prev,
         [selectedChatId]: completeRunMessage(prev[selectedChatId] ?? [], newRunId, {
           status: 'error',
-          finalText: `MiniMax 未配置：请编辑 ${configPath} 后重试。`,
+          finalText: retryRuntimeError,
         }),
       }))
       setRunningChatId(null)
       return
     }
+    const activeResolvedRuntime = resolvedRuntime
 
     let activeRuntime = runtime
     if (!activeRuntime) {
@@ -439,19 +866,6 @@ function App(props?: { __testInitialState?: TestInitialState }) {
         [selectedChatId]: completeRunMessage(prev[selectedChatId] ?? [], newRunId, {
           status: 'error',
           finalText: '当前无法初始化运行时：请在桌面端打开应用后重试。',
-        }),
-      }))
-      setRunningChatId(null)
-      return
-    }
-
-    const apiKey = latestConfig.getApiKey()
-    if (!apiKey) {
-      setChatMessages((prev) => ({
-        ...prev,
-        [selectedChatId]: completeRunMessage(prev[selectedChatId] ?? [], newRunId, {
-          status: 'error',
-          finalText: `读取配置失败：请检查 ${configPath} 的 baseUrl/apiKey/model。`,
         }),
       }))
       setRunningChatId(null)
@@ -505,9 +919,9 @@ function App(props?: { __testInitialState?: TestInitialState }) {
 
     const openAiChatCompletion = async (args: { messages: OpenAICompatChatMessage[]; tools?: OpenAICompatTool[] }) => {
       return createChatCompletionOpenAICompat({
-        baseUrl: latestConfig.baseUrl ?? 'https://api.minimaxi.com/v1',
-        apiKey,
-        model: latestConfig.model ?? 'MiniMax-M2.7',
+        baseUrl: activeResolvedRuntime.baseUrl,
+        apiKey: activeResolvedRuntime.apiKey ?? '',
+        model: activeResolvedRuntime.model,
         messages: args.messages,
         tools: args.tools,
         tool_choice: 'auto',
@@ -518,9 +932,9 @@ function App(props?: { __testInitialState?: TestInitialState }) {
 
     const openAiChatCompletionStream = async (args: { messages: OpenAICompatChatMessage[]; tools?: OpenAICompatTool[]; onContentDelta?: (delta: string) => void }) => {
       return createChatCompletionStreamOpenAICompat({
-        baseUrl: latestConfig.baseUrl ?? 'https://api.minimaxi.com/v1',
-        apiKey,
-        model: latestConfig.model ?? 'MiniMax-M2.7',
+        baseUrl: activeResolvedRuntime.baseUrl,
+        apiKey: activeResolvedRuntime.apiKey ?? '',
+        model: activeResolvedRuntime.model,
         messages: args.messages,
         tools: args.tools,
         tool_choice: 'auto',
@@ -536,7 +950,7 @@ function App(props?: { __testInitialState?: TestInitialState }) {
     }
 
     try {
-      const modelCharBudget = getUsableContextCharBudget(latestConfig.model)
+      const modelCharBudget = getUsableContextCharBudget(activeResolvedRuntime.model)
       const contextMessages = buildChatContextMessages({
         systemMessage: { role: 'system', content: SYSTEM_PROMPT },
         thread: threadBeforeUser,
@@ -552,7 +966,10 @@ function App(props?: { __testInitialState?: TestInitialState }) {
           openAiChatCompletionStream({ messages, tools, onContentDelta }),
         workspacePath: selectedWorkspacePath ?? undefined,
         onTimelineEvent: (event) => {
-          if (event.type === 'tool_execute') {
+          if (event.type === 'plan_updated') {
+            toolEventCount += 1
+            appendEventToRunMessage(createRunEventFromEngineTimeline({ runId: newRunId, idPrefix: `${newRunId}:retry`, sequence: toolEventCount, event }))
+          } else if (event.type === 'tool_execute') {
             toolEventCount += 1
             const phase = hasAnswerStarted ? 'answer' : 'thinking'
             appendEventToRunMessage({
@@ -637,9 +1054,10 @@ function App(props?: { __testInitialState?: TestInitialState }) {
             runId: newRunId,
             approval: result.pendingApproval,
             config: {
-              baseUrl: latestConfig.baseUrl ?? 'https://api.minimaxi.com/v1',
-              model: latestConfig.model ?? 'MiniMax-M2.7',
-              apiKey,
+              provider: resolvedRuntime.provider,
+              baseUrl: activeResolvedRuntime.baseUrl,
+              model: activeResolvedRuntime.model,
+              apiKey: activeResolvedRuntime.apiKey ?? '',
             },
           },
         }))
@@ -674,7 +1092,17 @@ function App(props?: { __testInitialState?: TestInitialState }) {
     }
 
     const id = `c_${Math.random().toString(16).slice(2)}`
-    setChats((prev) => [{ id, title: 'Branched Chat', workspacePath: selectedWorkspacePath, lastActivatedAt: Date.now() }, ...prev])
+    setChats((prev) => [
+      {
+        id,
+        title: 'Branched Chat',
+        workspacePath: selectedWorkspacePath,
+        lastActivatedAt: Date.now(),
+        llmProvider: selectedChat?.llmProvider ?? configStatus.defaults.provider,
+        llmModel: selectedChat?.llmModel ?? configStatus.defaults.model,
+      },
+      ...prev,
+    ])
     setSelectedChatId(id)
     setChatMessages((prev) => ({ ...prev, [id]: exported }))
   }
@@ -695,6 +1123,8 @@ function App(props?: { __testInitialState?: TestInitialState }) {
 
   function activateChat(chatId: string) {
     setSelectedChatId(chatId)
+    setActiveView('chat')
+    setSettingsProviderDialog(null)
   }
 
   function handleRenameChat(chatId: string) {
@@ -767,6 +1197,30 @@ function App(props?: { __testInitialState?: TestInitialState }) {
       }
     }
   }, [selectedThread])
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!modelPickerRef.current) return
+      if (modelPickerRef.current.contains(event.target as Node)) return
+      setModelPickerOpen(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [])
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!settingsProviderDialog) return
+      const target = event.target as HTMLElement | null
+      if (!target) return
+      if (target.closest('.mira-provider-dialog-panel')) return
+      setSettingsProviderDialog(null)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [settingsProviderDialog])
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
@@ -884,17 +1338,17 @@ function App(props?: { __testInitialState?: TestInitialState }) {
     }
 
     const fallback = buildFallbackSessionTitle(input.firstPrompt)
-    const apiKey = input.config.getApiKey()
-    if (!input.config.configured || !apiKey) {
+    const resolvedRuntime = resolveChatLlmRuntime(input.chatId, input.config)
+    if (!resolvedRuntime.ok) {
       setChats((prev) => upsertRecentChat(prev, { id: input.chatId, title: fallback }))
       return
     }
 
     try {
       const result = await createChatCompletionOpenAICompat({
-        baseUrl: input.config.baseUrl ?? 'https://api.minimaxi.com/v1',
-        apiKey,
-        model: input.config.model ?? 'MiniMax-M2.7',
+        baseUrl: resolvedRuntime.baseUrl,
+        apiKey: resolvedRuntime.apiKey ?? '',
+        model: resolvedRuntime.model,
         messages: [
           {
             role: 'system',
@@ -925,13 +1379,21 @@ function App(props?: { __testInitialState?: TestInitialState }) {
     setRunningChatId(selectedChatId)
     activeRunIdRef.current = runId
     const latestConfig = await refreshConfigStatus()
+    const resolvedRuntime = resolveChatLlmRuntime(selectedChatId, latestConfig)
     const userMessage = createUserMessage(newId(), task, now())
     pendingScrollMessageIdRef.current = userMessage.id
     followStateRef.current = beginRunFollow(runId)
     setChats((prev) => upsertRecentChat(prev, { id: selectedChatId }))
     setChatMessages((prev) => ({
       ...prev,
-      [selectedChatId]: appendRunMessages(prev[selectedChatId] ?? [], userMessage, createPendingRunMessage(runId, now(), runMode)),
+      [selectedChatId]: appendRunMessages(
+        prev[selectedChatId] ?? [],
+        userMessage,
+        createPlannedPendingRunMessage(runId, now(), runMode, {
+          provider: selectedChat?.llmProvider ?? configStatus.defaults.provider,
+          model: selectedChat?.llmModel ?? configStatus.defaults.model,
+        }),
+      ),
     }))
     void maybeGenerateSessionTitle({
       chatId: selectedChatId,
@@ -941,17 +1403,19 @@ function App(props?: { __testInitialState?: TestInitialState }) {
       config: latestConfig,
     })
 
-    if (!latestConfig.configured) {
+    if ('error' in resolvedRuntime) {
+      const sendRuntimeError = `${resolvedRuntime.error} 请编辑 ${configPath} 后重试。`
       setChatMessages((prev) => ({
         ...prev,
         [selectedChatId]: completeRunMessage(prev[selectedChatId] ?? [], runId, {
           status: 'error',
-          finalText: `MiniMax 未配置：请编辑 ${configPath} 后重试。`,
+          finalText: sendRuntimeError,
         }),
       }))
       setRunningChatId(null)
       return
     }
+    const activeResolvedRuntime = resolvedRuntime
     let activeRuntime = runtime
     if (!activeRuntime) {
       activeRuntime = await buildRuntimeForWorkspace(selectedWorkspacePath)
@@ -968,19 +1432,6 @@ function App(props?: { __testInitialState?: TestInitialState }) {
       setRunningChatId(null)
       return
     }
-    const apiKey = latestConfig.getApiKey()
-    if (!apiKey) {
-      setChatMessages((prev) => ({
-        ...prev,
-        [selectedChatId]: completeRunMessage(prev[selectedChatId] ?? [], runId, {
-          status: 'error',
-          finalText: `读取配置失败：请检查 ${configPath} 的 baseUrl/apiKey/model。`,
-        }),
-      }))
-      setRunningChatId(null)
-      return
-    }
-
     const abortController = new AbortController()
     activeAbortControllerRef.current = abortController
     const streamParser = createThinkStreamParser()
@@ -1030,9 +1481,9 @@ function App(props?: { __testInitialState?: TestInitialState }) {
       tools?: OpenAICompatTool[]
     }) => {
       return createChatCompletionOpenAICompat({
-        baseUrl: latestConfig.baseUrl ?? 'https://api.minimaxi.com/v1',
-        apiKey,
-        model: latestConfig.model ?? 'MiniMax-M2.7',
+        baseUrl: resolvedRuntime.baseUrl,
+        apiKey: activeResolvedRuntime.apiKey ?? '',
+        model: activeResolvedRuntime.model,
         messages: args.messages,
         tools: args.tools,
         tool_choice: 'auto',
@@ -1047,9 +1498,9 @@ function App(props?: { __testInitialState?: TestInitialState }) {
       onContentDelta?: (delta: string) => void
     }) => {
       return createChatCompletionStreamOpenAICompat({
-        baseUrl: latestConfig.baseUrl ?? 'https://api.minimaxi.com/v1',
-        apiKey,
-        model: latestConfig.model ?? 'MiniMax-M2.7',
+        baseUrl: resolvedRuntime.baseUrl,
+        apiKey: resolvedRuntime.apiKey ?? '',
+        model: resolvedRuntime.model,
         messages: args.messages,
         tools: args.tools,
         tool_choice: 'auto',
@@ -1066,9 +1517,9 @@ function App(props?: { __testInitialState?: TestInitialState }) {
 
     const summarizeBatch = async (messages: OpenAICompatChatMessage[]): Promise<CompressionSummary> => {
       const response = await createChatCompletionOpenAICompat({
-        baseUrl: latestConfig.baseUrl ?? 'https://api.minimaxi.com/v1',
-        apiKey,
-        model: latestConfig.model ?? 'MiniMax-M2.7',
+        baseUrl: resolvedRuntime.baseUrl,
+        apiKey: resolvedRuntime.apiKey ?? '',
+        model: resolvedRuntime.model,
         messages: [
           {
             role: 'system',
@@ -1103,7 +1554,7 @@ function App(props?: { __testInitialState?: TestInitialState }) {
         newUserText: task,
         maxContextChars: Number.MAX_SAFE_INTEGER,
       })
-      const modelCharBudget = getUsableContextCharBudget(latestConfig.model)
+      const modelCharBudget = getUsableContextCharBudget(activeResolvedRuntime.model)
       let compressionSummaryText: string | undefined
 
       const savedSummary = await activeRuntime.contextSummaryStore.getLatest(selectedChatId)
@@ -1168,7 +1619,10 @@ function App(props?: { __testInitialState?: TestInitialState }) {
           openAiChatCompletionStream({ messages, tools, onContentDelta }),
         workspacePath: selectedWorkspacePath ?? undefined,
         onTimelineEvent: (event) => {
-          if (event.type === 'tool_execute') {
+          if (event.type === 'plan_updated') {
+            toolEventCount += 1
+            appendEventToRunMessage(createRunEventFromEngineTimeline({ runId, sequence: toolEventCount, event }))
+          } else if (event.type === 'tool_execute') {
             toolEventCount += 1
             const phase = hasAnswerStarted ? 'answer' : 'thinking'
             const eventId = `${runId}:tool-exec:${toolEventCount}`
@@ -1268,9 +1722,10 @@ function App(props?: { __testInitialState?: TestInitialState }) {
             runId,
             approval: result.pendingApproval,
             config: {
-              baseUrl: latestConfig.baseUrl ?? 'https://api.minimaxi.com/v1',
-              model: latestConfig.model ?? 'MiniMax-M2.7',
-              apiKey,
+              provider: resolvedRuntime.provider,
+              baseUrl: resolvedRuntime.baseUrl,
+              model: resolvedRuntime.model,
+              apiKey: resolvedRuntime.apiKey ?? '',
             },
           },
         }))
@@ -1421,7 +1876,10 @@ function App(props?: { __testInitialState?: TestInitialState }) {
           }),
         onTimelineEvent: (event) => {
           const placement = getResumeEventPlacement(Boolean(lastAnswerSnapshot.trim()))
-          if (event.type === 'tool_execute') {
+          if (event.type === 'plan_updated') {
+            toolEventCount += 1
+            appendEventToRunMessage(createRunEventFromEngineTimeline({ runId, idPrefix: `${runId}:resume`, sequence: toolEventCount, event }))
+          } else if (event.type === 'tool_execute') {
             toolEventCount += 1
             appendEventToRunMessage({
               id: `${runId}:resume-tool-exec:${toolEventCount}`,
@@ -1564,41 +2022,49 @@ function App(props?: { __testInitialState?: TestInitialState }) {
   }
 
   async function handleSaveModelSettings() {
-    try {
-      setSettingsSaving(true)
-      setErrorMessage(null)
-      if (!isTauri()) {
-        setErrorMessage('当前是 Web 预览模式：请用 pnpm tauri:dev 运行桌面端')
-        return
-      }
+    await persistModelSettings({ closeDialog: true })
+  }
 
-      const baseUrl = settingsBaseUrl.trim()
-      const model = settingsModel.trim()
-      const apiKey = settingsApiKey.trim()
-      if (!baseUrl || !model || !apiKey) {
-        setErrorMessage('请填写 baseUrl / model / apiKey')
-        return
-      }
-
-      await saveMinimaxConfig({ baseUrl, model, apiKey })
-      setSettingsApiKey('')
-      await refreshConfigStatus()
-      setShowModelSettings(false)
-    } catch (e) {
-      setErrorMessage(e instanceof Error ? e.message : '保存配置失败')
-    } finally {
-      setSettingsSaving(false)
-    }
+  async function handleTestProvider(providerId: string) {
+    const draft = settingsProviders[providerId]
+    setSettingsTestingProvider(providerId)
+    setSettingsConnectionStatus((prev) => {
+      const next = { ...prev }
+      delete next[providerId]
+      return next
+    })
+    const result = await testProviderConnection({ providerId, draft })
+    const status = result.ok
+      ? { tone: 'success' as const, message: '连接成功，可以正常调用。' }
+      : { tone: 'error' as const, message: 'message' in result ? result.message : '连接测试失败' }
+    setSettingsConnectionStatus((prev) => ({
+      ...prev,
+      [providerId]: status,
+    }))
+    setSettingsTestingProvider(null)
   }
 
   function handleNewChat() {
     const id = newId()
-    setChats((prev) => [{ id, title: 'New Chat', workspacePath: null, pinnedAt: null, lastActivatedAt: Date.now() }, ...prev])
+    setChats((prev) => [
+      {
+        id,
+        title: 'New Chat',
+        workspacePath: null,
+        pinnedAt: null,
+        lastActivatedAt: Date.now(),
+        llmProvider: configStatus.defaults.provider,
+        llmModel: configStatus.defaults.model,
+      },
+      ...prev,
+    ])
     setSelectedChatId(id)
     setChatMessages((prev) => ({
       ...prev,
       [id]: [],
     }))
+    setActiveView('chat')
+    setSettingsProviderDialog(null)
   }
 
   function formatToolStepTitle(name: string, payload?: unknown) {
@@ -1732,6 +2198,71 @@ function App(props?: { __testInitialState?: TestInitialState }) {
       })
   }
 
+  function buildPlanSteps(events: RunEvent[]) {
+    const created = events.find((event): event is Extract<RunEvent, { kind: 'plan_created' }> => event.kind === 'plan_created')
+    const updated = [...events].reverse().find((event): event is Extract<RunEvent, { kind: 'plan_updated' }> => event.kind === 'plan_updated')
+    const baseSteps = updated?.steps ?? created?.steps
+    if (!baseSteps) return []
+
+    const steps = baseSteps.map((step) => ({ ...step }))
+    const byId = new Map(steps.map((step) => [step.id, step]))
+    for (const event of events) {
+      if (event.kind === 'plan_step_started') {
+        const step = byId.get(event.stepId)
+        if (step) {
+          step.status = 'active'
+          step.summary = event.summary ?? step.summary
+        }
+      }
+      if (event.kind === 'plan_step_completed') {
+        const step = byId.get(event.stepId)
+        if (step) {
+          step.status = 'completed'
+          step.summary = event.summary ?? step.summary
+        }
+      }
+      if (event.kind === 'plan_step_failed') {
+        const step = byId.get(event.stepId)
+        if (step) {
+          step.status = 'failed'
+          step.summary = event.summary ?? step.summary
+        }
+      }
+    }
+    return steps
+  }
+
+  function getPlanStepStatusLabel(status: string) {
+    if (status === 'active') return '进行中'
+    if (status === 'completed') return '完成'
+    if (status === 'failed') return '失败'
+    return '待处理'
+  }
+
+  function renderTaskPlan(events: RunEvent[]) {
+    const steps = buildPlanSteps(events)
+    if (steps.length === 0) return null
+    return (
+      <section className="mira-task-plan" aria-label="计划">
+        <h3 className="mira-task-plan-title">计划</h3>
+        <div className="mira-task-plan-list">
+          {steps.map((step) => (
+            <div key={step.id} className={`mira-task-plan-step ${step.status}`}>
+              <span className="mira-task-plan-marker" aria-hidden="true" />
+              <div className="mira-task-plan-body">
+                <div className="mira-task-plan-row">
+                  <span className="mira-task-plan-step-title">{step.title}</span>
+                  <span className={`mira-task-plan-status ${step.status}`}>{getPlanStepStatusLabel(step.status)}</span>
+                </div>
+                {step.summary ? <div className="mira-task-plan-summary">{step.summary}</div> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    )
+  }
+
   function renderProcessSteps(runId: string, events: RunEvent[]) {
     const items = buildProcessStepItems(runId, events)
     if (items.length === 0) return null
@@ -1796,10 +2327,6 @@ function App(props?: { __testInitialState?: TestInitialState }) {
               <span className="mira-nav-icon"><TaskIcon /></span>
               <span>Task</span>
             </button>
-            <button type="button" className="mira-nav-item">
-              <span className="mira-nav-icon"><CustomizeIcon /></span>
-              <span>Customize</span>
-            </button>
           </div>
           <div className="mira-sidebar-title">Recents</div>
           <div className="mira-chat-list" role="list">
@@ -1849,15 +2376,18 @@ function App(props?: { __testInitialState?: TestInitialState }) {
           </div>
         </div>
         <div className="mira-sidebar-footer">
-          <div className="mira-user-pill">
-            <span className="mira-user-avatar">B</span>
-            <span>bytedance</span>
-          </div>
-          <div className="mira-user-actions">
-            <button type="button" className="mira-user-icon" aria-label="Status">●</button>
-            <button type="button" className="mira-user-icon" aria-label="History">◷</button>
-            <button type="button" className="mira-user-icon" onClick={() => setShowModelSettings(true)} aria-label="Settings">⚙</button>
-          </div>
+          <button
+            type="button"
+            className={`mira-settings-entry ${activeView === 'settings' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveView('settings')
+              setSettingsActiveTab('providers')
+              setSettingsProviderDialog(null)
+            }}
+          >
+            <span className="mira-settings-entry-icon"><SlidersHorizontal size={16} strokeWidth={2.2} /></span>
+            <span>设置</span>
+          </button>
         </div>
       </aside>
 
@@ -1865,7 +2395,9 @@ function App(props?: { __testInitialState?: TestInitialState }) {
         <button type="button" className="mira-backdrop" aria-label="Close menu" onClick={() => setDrawerOpen(false)} />
       ) : null}
 
-      <div className="mira-main">
+      <div className={`mira-main ${activeView === 'settings' ? 'settings-view' : ''}`}>
+        {activeView === 'chat' ? (
+          <>
         <div className="mira-topbar">
           <h1 className="mira-topbar-title">{chats.find((c) => c.id === selectedChatId)?.title ?? 'Chat'}</h1>
           <div className="mira-topbar-actions">
@@ -1909,14 +2441,14 @@ function App(props?: { __testInitialState?: TestInitialState }) {
                   className={`mira-run ${m.status}`}
                 >
                   <div className="mira-run-label">
-                    <span className="mira-run-model">MiniMax-M2.7</span>
+                    <span className="mira-run-model">{m.llmModel ?? configStatus.defaults.model ?? 'Model'}</span>
                     <span className="mira-mono">{m.time}</span>
                   </div>
 
                   {m.status === 'pending' ? <div className="mira-run-state">Thinking...</div> : null}
                   {m.status === 'waiting_approval' ? <div className="mira-run-state">等待你的确认…</div> : null}
 
-                  {m.mode === 'deep_research' || m.thinkText || m.events.some((event) => event.kind === 'tool_execute' || event.kind === 'tool_result' || event.kind === 'approval_requested' || event.kind === 'approval_resolved') ? (
+                  {m.mode === 'deep_research' || m.thinkText || m.events.some((event) => event.kind === 'tool_execute' || event.kind === 'tool_result' || event.kind === 'approval_requested' || event.kind === 'approval_resolved' || event.kind === 'plan_created' || event.kind === 'plan_updated') ? (
                     <details
                       className="mira-card"
                       open={isThinkingExpanded(
@@ -1939,6 +2471,7 @@ function App(props?: { __testInitialState?: TestInitialState }) {
                             {m.status === 'pending' ? 'Research trace will appear here...' : 'No reasoning text was returned for this research run.'}
                           </div>
                         ) : null}
+                        {renderTaskPlan(m.events)}
                         {renderProcessSteps(m.id, m.events)}
                       </div>
                     </details>
@@ -2048,28 +2581,57 @@ function App(props?: { __testInitialState?: TestInitialState }) {
               placeholder='Ask anything, use "/" to select a skill or "@" to reference a resource'
             />
             <div className="mira-composer-actions">
-              <div className="mira-composer-left">
+              <div className="mira-composer-left" ref={modelPickerRef}>
+                <button type="button" className="mira-chip mira-model-chip" onClick={() => setModelPickerOpen((prev) => !prev)}>
+                  {composerModelLabel}
+                </button>
+                {modelPickerOpen ? (
+                  <div className="mira-model-popover">
+                    <div className="mira-model-popover-title">选择模型</div>
+                    {modelPickerProviderIds.map((providerId) => {
+                      const provider = configStatus.providers[providerId]
+                      const models = provider?.models ?? []
+                      return (
+                        <div key={providerId} className="mira-model-group">
+                          <div className="mira-model-group-title">{provider?.label ?? providerId}</div>
+                          {models.map((model) => (
+                            <button
+                              key={`${providerId}:${model}`}
+                              type="button"
+                              className={`mira-model-option ${selectedChat?.llmProvider === providerId && selectedChat?.llmModel === model ? 'selected' : ''}`}
+                              onClick={() => handleSelectSessionModel(providerId, model)}
+                            >
+                              <span>{model}</span>
+                              {selectedChat?.llmProvider === providerId && selectedChat?.llmModel === model ? <span>当前</span> : null}
+                            </button>
+                          ))}
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : null}
                 <button
                   type="button"
-                  className={`mira-chip mira-mode-toggle ${deepResearchEnabled ? 'active' : ''}`}
+                  className={`mira-round-btn ${deepResearchEnabled ? 'mira-deep-research-active' : ''}`}
                   onClick={() => setDeepResearchEnabled((prev) => !prev)}
                   aria-pressed={deepResearchEnabled}
+                  aria-label="Deep Research"
                 >
-                  Deep Research
+                  <CustomizeIcon />
                 </button>
                 <button type="button" className="mira-round-btn" aria-label="Attach">
-                  📎
+                  <AttachIcon />
                 </button>
                 <button type="button" className="mira-round-btn" disabled aria-label="Link">
-                  🔗
+                  <Link2 size={18} strokeWidth={2} />
                 </button>
                 <button type="button" className="mira-round-btn" onClick={() => setPrompt('')} aria-label="Clear">
-                  ✕
+                  <CloseIcon />
                 </button>
               </div>
               <div className="mira-composer-right">
                 <button type="button" className="mira-round-btn" disabled aria-label="Add">
-                  +
+                  <PlusIcon />
                 </button>
                 {runningChatId === selectedChatId ? (
                   <button
@@ -2088,62 +2650,330 @@ function App(props?: { __testInitialState?: TestInitialState }) {
                     disabled={!prompt.trim()}
                     aria-label="Send"
                   >
-                    →
+                    <ChevronRightIcon />
                   </button>
                 )}
               </div>
             </div>
           </div>
         </div>
-      </div>
+          </>
+        ) : null}
 
-      {showModelSettings ? (
-        <div className="mira-modal" role="dialog" aria-modal="true">
-          <div className="mira-modal-card">
-            <div className="mira-modal-head">
-              <div className="mira-modal-title">配置 MiniMax</div>
-              <button type="button" className="mira-btn" onClick={() => setShowModelSettings(false)}>
-                关闭
-              </button>
+        {activeView === 'settings' ? (
+          <div className="mira-settings-center">
+            <header className="mira-settings-header">
+              <h2 className="mira-settings-title">设置</h2>
+              <div className="mira-settings-subtitle">管理 CircleLoop 和 Claude Code 设置</div>
+            </header>
+
+            <div className="mira-settings-body">
+              <aside className="mira-settings-side">
+                <nav className="mira-settings-nav" aria-label="Settings sections">
+                  <button
+                    type="button"
+                    className={`mira-settings-nav-item ${settingsActiveTab === 'general' ? 'active' : ''}`}
+                    onClick={() => setSettingsActiveTab('general')}
+                  >
+                    <span className="mira-settings-nav-icon"><SlidersHorizontal size={15} strokeWidth={2} /></span>
+                    通用
+                  </button>
+
+                  {[
+                    ['providers', '服务商'],
+                    ['skills', 'Skills'],
+                    ['mcp', 'MCP'],
+                    ['usage', '用量统计'],
+                    ['assistant', '助理'],
+                  ].map(([tab, label]) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      className={`mira-settings-nav-item ${settingsActiveTab === tab ? 'active' : ''}`}
+                      onClick={() => setSettingsActiveTab(tab as SettingsTab)}
+                    >
+                      <span className="mira-settings-nav-icon"><SlidersHorizontal size={15} strokeWidth={2} /></span>
+                      {label}
+                    </button>
+                  ))}
+                </nav>
+              </aside>
+
+              <section className="mira-settings-main">
+              {settingsActiveTab === 'providers' ? (
+                <div className="mira-settings-cards">
+                  <section className="mira-settings-card">
+                    <div className="mira-settings-card-head">
+                      <div>
+                        <h3>默认模型</h3>
+                        <p>仅影响新对话；已有会话保持自己的模型选择不变。</p>
+                      </div>
+                    </div>
+                    <div className="mira-default-model-picker">
+                      <button
+                        type="button"
+                        className="mira-select-trigger"
+                        aria-label={`默认模型 ${settingsDefaultModel || '未设置'}`}
+                        aria-haspopup="listbox"
+                        aria-expanded={settingsDefaultModelPickerOpen}
+                        onClick={() => setSettingsDefaultModelPickerOpen((open) => !open)}
+                      >
+                        <span>{settingsDefaultModel || '暂无可选 model'}</span>
+                        <ChevronDownIcon />
+                      </button>
+                      {settingsDefaultModelPickerOpen ? (
+                        <div className="mira-select-popover" role="listbox" aria-label="默认模型">
+                          {settingsDefaultModelGroups.length > 0 ? (
+                            settingsDefaultModelGroups.map((group) => (
+                              <div key={group.providerId} className="mira-select-group">
+                                <div className="mira-select-label">{group.label}</div>
+                                {group.models.map((model) => (
+                                  <button
+                                    key={`${group.providerId}-${model}`}
+                                    type="button"
+                                    role="option"
+                                    aria-selected={settingsDefaultProvider === group.providerId && settingsDefaultModel === model}
+                                    className="mira-select-option"
+                                    onClick={() => {
+                                      setSettingsDefaultProvider(group.providerId)
+                                      setSettingsDefaultModel(model)
+                                      setSettingsDefaultModelPickerOpen(false)
+                                      void persistModelSettings({
+                                        defaults: { provider: group.providerId, model },
+                                        silentWeb: true,
+                                      })
+                                    }}
+                                  >
+                                    {model}
+                                  </button>
+                                ))}
+                              </div>
+                            ))
+                          ) : (
+                            <div className="mira-select-empty">暂无可选 model</div>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  </section>
+
+                  <section className="mira-settings-card">
+                    <div className="mira-settings-card-head">
+                      <div>
+                        <h3>已连接的提供商</h3>
+                        <p>点开某个渠道后，可直接修改地址、密钥和手动维护的模型列表。</p>
+                      </div>
+                    </div>
+                    <div className="mira-provider-list">
+                      {configuredProviderIds.length > 0 ? (
+                        configuredProviderIds.map((providerId) => {
+                          const provider = settingsProviders[providerId]
+                          return (
+                            <div key={providerId} className="mira-provider-row">
+                              <ProviderIcon providerId={providerId} label={provider?.label ?? providerId} />
+                              <div className="mira-provider-row-body">
+                                <div className="mira-provider-summary-title">{provider?.label ?? providerId}</div>
+                                <div className="mira-provider-summary-meta">{getProviderDescription(providerId)}</div>
+                              </div>
+                              <div className="mira-provider-summary-actions">
+                                <button
+                                  type="button"
+                                  className="mira-btn subtle"
+                                  aria-label={`编辑 ${provider?.label ?? providerId}`}
+                                  onClick={() => setSettingsProviderDialog({ providerId, mode: 'edit' })}
+                                >
+                                  编辑
+                                </button>
+                                <button
+                                  type="button"
+                                  className="mira-btn subtle danger"
+                                  aria-label={`删除配置 ${provider?.label ?? providerId}`}
+                                  onClick={() => setSettingsDisconnectProviderId(providerId)}
+                                >
+                                  删除配置
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })
+                      ) : (
+                        <div className="mira-provider-empty">还没有已配置的渠道</div>
+                      )}
+                    </div>
+                  </section>
+
+                  <section className="mira-settings-card">
+                    <div className="mira-settings-card-head">
+                      <div>
+                        <h3>添加提供商</h3>
+                        <p>只展示还没接入的渠道，避免一进来把所有配置都铺满屏幕。</p>
+                      </div>
+                      <div className="mira-static-status">待添加 {availableProviderIds.length} 个</div>
+                    </div>
+                    <div className="mira-provider-add-list">
+                      {availableProviderIds.length > 0 ? (
+                        availableProviderIds.map((providerId) => {
+                          const provider = settingsProviders[providerId]
+                          const label = provider?.label ?? providerCatalog[providerId]?.label ?? providerId
+                          const connectable = isConnectableProvider(providerId)
+                          return (
+                            <div key={providerId} className={`mira-provider-row ${connectable ? '' : 'disabled'}`}>
+                              <ProviderIcon providerId={providerId} label={label} />
+                              <div className="mira-provider-row-body">
+                                <div className="mira-provider-summary-title">{label}</div>
+                                <div className="mira-provider-summary-meta">{getProviderDescription(providerId)}</div>
+                              </div>
+                              {connectable ? (
+                                <button
+                                  type="button"
+                                  className="mira-btn subtle"
+                                  aria-label={`连接 ${label}`}
+                                  onClick={() => setSettingsProviderDialog({ providerId, mode: 'connect' })}
+                                >
+                                  + 连接
+                                </button>
+                              ) : (
+                                <span className="mira-provider-unavailable">暂不可用</span>
+                              )}
+                            </div>
+                          )
+                        })
+                      ) : (
+                        <div className="mira-provider-empty">没有可添加的渠道了</div>
+                      )}
+                    </div>
+                  </section>
+
+                </div>
+              ) : null}
+
+              {settingsActiveTab === 'general' ? (
+                <div className="mira-settings-placeholder">这里后续可以放通用设置，例如主题、窗口行为、快捷键。</div>
+              ) : null}
+              {settingsActiveTab === 'skills' ? (
+                <div className="mira-settings-placeholder">这里后续可以放 Skills 的启用状态、排序、默认行为和可见性设置。</div>
+              ) : null}
+              {settingsActiveTab === 'mcp' ? (
+                <div className="mira-settings-placeholder">这里后续可以放 MCP 服务连接、授权状态和服务开关。</div>
+              ) : null}
+              {settingsActiveTab === 'usage' ? (
+                <div className="mira-settings-placeholder">这里后续可以放模型调用次数、token 统计和最近错误记录。</div>
+              ) : null}
+              {settingsActiveTab === 'assistant' ? (
+                <div className="mira-settings-placeholder">这里后续可以放助理行为、工具权限和审批策略设置。</div>
+              ) : null}
+            </section>
             </div>
-            <div className="mira-modal-body">
-              <div className="mira-hint">
-                配置将保存到 <span className="mira-mono">{configPath}</span>。
-              </div>
-              <label className="mira-field">
-                <div className="mira-field-label">Base URL</div>
-                <input className="mira-text" value={settingsBaseUrl} onChange={(e) => setSettingsBaseUrl(e.target.value)} />
-              </label>
-              <label className="mira-field">
-                <div className="mira-field-label">Model</div>
-                <input className="mira-text" value={settingsModel} onChange={(e) => setSettingsModel(e.target.value)} />
-              </label>
-              <label className="mira-field">
-                <div className="mira-field-label">API Key</div>
-                <textarea
-                  className="mira-input"
-                  value={settingsApiKey}
-                  onChange={(e) => setSettingsApiKey(e.target.value)}
-                  placeholder="粘贴 MiniMax API Key"
-                />
-              </label>
-              <div className="mira-composer-actions">
-                <button type="button" className="mira-btn" onClick={() => setSettingsApiKey('')} disabled={settingsSaving}>
-                  清空
-                </button>
-                <button
-                  type="button"
-                  className="mira-btn primary"
-                  onClick={handleSaveModelSettings}
-                  disabled={settingsSaving}
-                >
-                  保存
-                </button>
-              </div>
-            </div>
+
+            {settingsProviderDialog ? (() => {
+              const providerId = settingsProviderDialog.providerId
+              const provider = settingsProviders[providerId]
+              const label = provider?.label ?? configStatus.providers[providerId]?.label ?? providerId
+              const title = `${settingsProviderDialog.mode === 'connect' ? '连接' : '编辑'} ${label}`
+              const hidesApiKey = providerId === 'ollama'
+              return (
+                <div className="mira-provider-dialog-backdrop">
+                  <div className="mira-provider-dialog-panel" role="dialog" aria-modal="true" aria-label={title}>
+                    <div className="mira-provider-dialog-head">
+                      <div className="mira-provider-dialog-title">
+                        <ProviderIcon providerId={providerId} label={label} />
+                        <div>
+                          <h3>{title}</h3>
+                          <p>{getProviderDescription(providerId)}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mira-provider-dialog-form">
+                      <label className="mira-field">
+                        <div className="mira-field-label">Base URL</div>
+                        <input className="mira-text" value={provider?.baseUrl ?? ''} onChange={(e) => updateSettingsProvider(providerId, { baseUrl: e.target.value })} />
+                      </label>
+                      {hidesApiKey ? null : (
+                        <label className="mira-field">
+                          <div className="mira-field-label">API Key</div>
+                          <input className="mira-text" value={provider?.apiKey ?? ''} onChange={(e) => updateSettingsProvider(providerId, { apiKey: e.target.value })} />
+                        </label>
+                      )}
+                      <label className="mira-field">
+                        <div className="mira-field-label">Default Model</div>
+                        <input className="mira-text" value={provider?.defaultModel ?? ''} onChange={(e) => updateSettingsProvider(providerId, { defaultModel: e.target.value })} />
+                      </label>
+                      <label className="mira-field full">
+                        <div className="mira-field-label">Models</div>
+                        <textarea
+                          className="mira-input"
+                          value={provider?.modelsText ?? ''}
+                          onChange={(e) => updateSettingsProvider(providerId, { modelsText: e.target.value })}
+                          placeholder="一行一个 model"
+                        />
+                      </label>
+                    </div>
+                    {settingsConnectionStatus[providerId] ? (
+                      <div className={`mira-provider-test-result ${settingsConnectionStatus[providerId].tone}`}>
+                        {settingsConnectionStatus[providerId].message}
+                      </div>
+                    ) : null}
+                    <div className="mira-provider-dialog-actions">
+                      <button type="button" className="mira-btn subtle" onClick={() => setSettingsProviderDialog(null)}>
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        className="mira-btn subtle"
+                        onClick={() => void handleTestProvider(providerId)}
+                        disabled={settingsTestingProvider === providerId}
+                      >
+                        {settingsTestingProvider === providerId ? '测试中...' : '测试连接'}
+                      </button>
+                      <button
+                        type="button"
+                        className="mira-btn primary"
+                        onClick={handleSaveModelSettings}
+                        disabled={settingsSaving}
+                      >
+                        {settingsSaving ? '保存中...' : settingsProviderDialog.mode === 'connect' ? '连接' : '保存'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })() : null}
+
+            {settingsDisconnectProviderId ? (() => {
+              const providerId = settingsDisconnectProviderId
+              const label = settingsProviders[providerId]?.label ?? configStatus.providers[providerId]?.label ?? providerId
+              return (
+                <div className="mira-provider-dialog-backdrop">
+                  <div className="mira-provider-confirm-panel" role="dialog" aria-modal="true" aria-label={`删除配置 ${label}`}>
+                    <div className="mira-provider-dialog-title">
+                      <ProviderIcon providerId={providerId} label={label} />
+                      <div>
+                        <h3>删除配置 {label}</h3>
+                        <p>删除后该提供商会回到添加提供商列表，已保存的连接信息会被清空。</p>
+                      </div>
+                    </div>
+                    <div className="mira-provider-dialog-actions">
+                      <button type="button" className="mira-btn subtle" onClick={() => setSettingsDisconnectProviderId(null)}>
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        className="mira-btn primary danger"
+                        onClick={() => {
+                          deleteSettingsProviderConfig(providerId)
+                          setSettingsDisconnectProviderId(null)
+                        }}
+                      >
+                        删除配置
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })() : null}
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </div>
   )
 }

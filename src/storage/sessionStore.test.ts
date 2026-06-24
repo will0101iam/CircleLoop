@@ -33,7 +33,13 @@ describe('session store', () => {
     const run = vi.fn().mockResolvedValue(undefined)
     const query = vi
       .fn()
-      .mockResolvedValueOnce([{ name: 'workspace_path' }, { name: 'pinned_at' }, { name: 'last_activated_at' }])
+      .mockResolvedValueOnce([
+        { name: 'workspace_path' },
+        { name: 'pinned_at' },
+        { name: 'last_activated_at' },
+        { name: 'llm_provider' },
+        { name: 'llm_model' },
+      ])
       .mockResolvedValueOnce([{ name: 'workspace_path', notnull: 0 }])
     const store = createSessionStore({
       db: { run, query },
@@ -58,7 +64,7 @@ describe('session store', () => {
     )
     expect(run).toHaveBeenNthCalledWith(
       3,
-      'create table if not exists chat_threads (id text primary key, title text not null, workspace_path text, pinned_at integer, last_activated_at integer, messages_json text not null, created_at integer not null, updated_at integer not null)',
+      'create table if not exists chat_threads (id text primary key, title text not null, workspace_path text, pinned_at integer, last_activated_at integer, llm_provider text, llm_model text, messages_json text not null, created_at integer not null, updated_at integer not null)',
       [],
     )
     expect(run).toHaveBeenNthCalledWith(
@@ -72,7 +78,13 @@ describe('session store', () => {
     const run = vi.fn().mockResolvedValue(undefined)
     const query = vi
       .fn()
-      .mockResolvedValueOnce([{ name: 'workspace_path' }, { name: 'pinned_at' }, { name: 'last_activated_at' }])
+      .mockResolvedValueOnce([
+        { name: 'workspace_path' },
+        { name: 'pinned_at' },
+        { name: 'last_activated_at' },
+        { name: 'llm_provider' },
+        { name: 'llm_model' },
+      ])
       .mockResolvedValueOnce([{ name: 'workspace_path', notnull: 0 }])
     const store = createSessionStore({
       db: { run, query },
@@ -98,6 +110,8 @@ describe('session store', () => {
       { name: 'workspace_path' },
       { name: 'pinned_at' },
       { name: 'last_activated_at' },
+      { name: 'llm_provider' },
+      { name: 'llm_model' },
     ]).mockResolvedValueOnce([
       { name: 'workspace_path', notnull: 0 },
     ]).mockResolvedValueOnce([
@@ -137,7 +151,7 @@ describe('session store', () => {
     )
     expect(run).toHaveBeenNthCalledWith(
       3,
-      'create table if not exists chat_threads (id text primary key, title text not null, workspace_path text, pinned_at integer, last_activated_at integer, messages_json text not null, created_at integer not null, updated_at integer not null)',
+      'create table if not exists chat_threads (id text primary key, title text not null, workspace_path text, pinned_at integer, last_activated_at integer, llm_provider text, llm_model text, messages_json text not null, created_at integer not null, updated_at integer not null)',
       [],
     )
     expect(query).toHaveBeenCalledWith(

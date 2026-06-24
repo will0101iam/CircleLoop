@@ -8,6 +8,13 @@ import { buildOpenAICompatTools } from '../llm/openaiTools'
 import type { ToolDefinition, ToolResult } from '../tools/toolRegistry'
 import { getApprovalDecision } from './approvalPolicy'
 
+export type EnginePlanStep = {
+  id: string
+  title: string
+  status: 'pending' | 'active' | 'completed' | 'failed'
+  summary?: string
+}
+
 export type EngineTimelineEvent =
   | { type: 'llm_request'; messages: OpenAICompatChatMessage[]; tools?: OpenAICompatTool[] }
   | { type: 'llm_tool_calls'; tool_calls: OpenAICompatToolCall[] }
@@ -17,6 +24,7 @@ export type EngineTimelineEvent =
   | { type: 'approval_requested'; tool_call: OpenAICompatToolCall; args: unknown; summary: string; reason: string }
   | { type: 'approval_resolved'; tool_call_id: string; approved: boolean }
   | { type: 'llm_content'; content: string }
+  | { type: 'plan_updated'; steps: EnginePlanStep[] }
 
 export type ToolRegistryLike = {
   execute: (name: string, args: unknown) => Promise<ToolResult>
@@ -63,6 +71,28 @@ function safeJsonParse(input: string): ToolResult<unknown> {
     const message = err instanceof Error ? err.message : 'Invalid JSON'
     return { ok: false as const, error: { code: 'INVALID_TOOL_ARGUMENTS', message } }
   }
+}
+
+function getPlanStepsFromToolResult(name: string, result: ToolResult): EnginePlanStep[] | null {
+  if (name !== 'update_plan' || !result.ok) return null
+  const data = result.data
+  if (!data || typeof data !== 'object' || !Array.isArray((data as { steps?: unknown }).steps)) return null
+  const steps = (data as { steps: unknown[] }).steps
+  if (
+    steps.every((step): step is EnginePlanStep => {
+      if (!step || typeof step !== 'object') return false
+      const record = step as Record<string, unknown>
+      return (
+        typeof record.id === 'string' &&
+        typeof record.title === 'string' &&
+        (record.status === 'pending' || record.status === 'active' || record.status === 'completed' || record.status === 'failed') &&
+        (record.summary === undefined || typeof record.summary === 'string')
+      )
+    })
+  ) {
+    return steps
+  }
+  return null
 }
 
 async function continueFromToolCalls(input: {
@@ -162,6 +192,8 @@ async function continueFromToolCalls(input: {
       name: toolCall.function.name,
       result: execResult,
     })
+    const planSteps = getPlanStepsFromToolResult(toolCall.function.name, execResult)
+    if (planSteps) input.pushEvent({ type: 'plan_updated', steps: planSteps })
     messages.push({
       role: 'tool',
       tool_call_id: toolCall.id,

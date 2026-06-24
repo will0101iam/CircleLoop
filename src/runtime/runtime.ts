@@ -16,6 +16,7 @@ import { createQuerySqlTool } from '../tools/querySqlTool'
 import { createReadFileTool } from '../tools/readFileTool'
 import { createSearchCodeTool } from '../tools/searchCodeTool'
 import { createToolRegistry } from '../tools/toolRegistry'
+import { createUpdatePlanTool } from '../tools/updatePlanTool'
 import { createWriteFileTool } from '../tools/writeFileTool'
 
 function workspaceRequiredResult() {
@@ -64,6 +65,7 @@ export async function createRuntime(deps?: {
   tools.register(createQuerySqlTool({ db }))
   tools.register(createCreateSessionTool({ store: sessionStore }))
   tools.register(createListSessionsTool({ store: sessionStore }))
+  tools.register(createUpdatePlanTool())
   if (deps?.fileOps) {
     registerWorkspaceAwareTool(tools, {
       workspacePath: deps.workspacePath,

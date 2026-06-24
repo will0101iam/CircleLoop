@@ -11,7 +11,7 @@ export async function applyMigrations(deps: {
     [],
   )
   await deps.run(
-    'create table if not exists chat_threads (id text primary key, title text not null, workspace_path text, pinned_at integer, last_activated_at integer, messages_json text not null, created_at integer not null, updated_at integer not null)',
+    'create table if not exists chat_threads (id text primary key, title text not null, workspace_path text, pinned_at integer, last_activated_at integer, llm_provider text, llm_model text, messages_json text not null, created_at integer not null, updated_at integer not null)',
     [],
   )
 
@@ -29,6 +29,14 @@ export async function applyMigrations(deps: {
   const hasLastActivatedAt = chatThreadColumns.some((column) => column.name === 'last_activated_at')
   if (!hasLastActivatedAt) {
     await deps.run('alter table chat_threads add column last_activated_at integer', [])
+  }
+  const hasLlmProvider = chatThreadColumns.some((column) => column.name === 'llm_provider')
+  if (!hasLlmProvider) {
+    await deps.run('alter table chat_threads add column llm_provider text', [])
+  }
+  const hasLlmModel = chatThreadColumns.some((column) => column.name === 'llm_model')
+  if (!hasLlmModel) {
+    await deps.run('alter table chat_threads add column llm_model text', [])
   }
 
   const sessionColumns = await deps.query<Array<{ name: string; notnull: number }>[number]>('pragma table_info(sessions)', [])

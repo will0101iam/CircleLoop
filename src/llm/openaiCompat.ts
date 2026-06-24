@@ -39,7 +39,7 @@ async function safeFetch(input: RequestInfo | URL, init: RequestInit, fetchImpl:
 
 export async function createChatCompletionOpenAICompat(input: {
   baseUrl: string
-  apiKey: string
+  apiKey?: string | null
   messages: OpenAICompatChatMessage[]
   model?: string
   tools?: OpenAICompatTool[]
@@ -64,7 +64,7 @@ export async function createChatCompletionOpenAICompat(input: {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${input.apiKey}`,
+      ...(input.apiKey ? { Authorization: `Bearer ${input.apiKey}` } : {}),
     },
     body: JSON.stringify(body),
     signal: input.signal,
@@ -123,7 +123,7 @@ export async function createChatCompletionOpenAICompat(input: {
 
 export async function createChatCompletionStreamOpenAICompat(input: {
   baseUrl: string
-  apiKey: string
+  apiKey?: string | null
   messages: OpenAICompatChatMessage[]
   model?: string
   tools?: OpenAICompatTool[]
@@ -151,7 +151,7 @@ export async function createChatCompletionStreamOpenAICompat(input: {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${input.apiKey}`,
+        ...(input.apiKey ? { Authorization: `Bearer ${input.apiKey}` } : {}),
       },
       body: JSON.stringify(body),
       signal: input.signal,

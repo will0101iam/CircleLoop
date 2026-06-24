@@ -1,6 +1,13 @@
 export type RunMode = 'normal' | 'deep_research'
 export type RunPhase = 'thinking' | 'answer'
 export type RunAnchor = 'thinking' | 'answer'
+export type PlanStepStatus = 'pending' | 'active' | 'completed' | 'failed'
+export type PlanStep = {
+  id: string
+  title: string
+  status: PlanStepStatus
+  summary?: string
+}
 
 export type RunEvent =
   | { id: string; kind: 'reasoning'; phase: 'thinking'; text: string }
@@ -10,6 +17,11 @@ export type RunEvent =
   | { id: string; kind: 'tool_result'; phase: RunPhase; name: string; ok: boolean; payload: unknown; anchor?: RunAnchor; groupId?: string }
   | { id: string; kind: 'approval_requested'; phase: RunPhase; name: string; summary: string; reason: string; anchor?: RunAnchor; groupId?: string }
   | { id: string; kind: 'approval_resolved'; phase: RunPhase; name: string; approved: boolean; anchor?: RunAnchor; groupId?: string }
+  | { id: string; kind: 'plan_created'; phase: 'thinking'; steps: PlanStep[] }
+  | { id: string; kind: 'plan_step_started'; phase: 'thinking'; stepId: string; summary?: string }
+  | { id: string; kind: 'plan_step_completed'; phase: 'thinking'; stepId: string; summary?: string }
+  | { id: string; kind: 'plan_step_failed'; phase: 'thinking'; stepId: string; summary?: string }
+  | { id: string; kind: 'plan_updated'; phase: 'thinking'; steps: PlanStep[] }
 
 export type AnswerSegment =
   | { id: string; kind: 'text'; text: string }
@@ -35,6 +47,8 @@ export type RunThreadMessage = {
   kind: 'run'
   time: string
   mode: RunMode
+  llmProvider?: string | null
+  llmModel?: string | null
   status: 'pending' | 'waiting_approval' | 'completed' | 'error'
   thinkText: string | null
   events: RunEvent[]
@@ -52,8 +66,62 @@ export function createAssistantMessage(id: string, text: string, time: string): 
   return { id, kind: 'assistant', text, time }
 }
 
-export function createPendingRunMessage(id: string, time: string, mode: RunMode = 'normal'): RunThreadMessage {
-  return { id, kind: 'run', time, mode, status: 'pending', thinkText: null, events: [], finalText: null, answerSegments: [] }
+export function createPendingRunMessage(
+  id: string,
+  time: string,
+  mode: RunMode = 'normal',
+  llm?: { provider?: string | null; model?: string | null },
+): RunThreadMessage {
+  return {
+    id,
+    kind: 'run',
+    time,
+    mode,
+    llmProvider: llm?.provider ?? null,
+    llmModel: llm?.model ?? null,
+    status: 'pending',
+    thinkText: null,
+    events: [],
+    finalText: null,
+    answerSegments: [],
+  }
+}
+
+export function createDefaultTaskPlanEvents(runId: string): RunEvent[] {
+  const steps: PlanStep[] = [
+    { id: 'understand', title: '理解需求', status: 'active' },
+    { id: 'context', title: '收集上下文', status: 'pending' },
+    { id: 'execute', title: '执行任务', status: 'pending' },
+    { id: 'verify', title: '验证并总结', status: 'pending' },
+  ]
+
+  return [
+    { id: `${runId}:plan:created`, kind: 'plan_created', phase: 'thinking', steps },
+    { id: `${runId}:plan:step:understand:start`, kind: 'plan_step_started', phase: 'thinking', stepId: 'understand' },
+    {
+      id: `${runId}:plan:step:understand:complete`,
+      kind: 'plan_step_completed',
+      phase: 'thinking',
+      stepId: 'understand',
+      summary: '已记录用户请求',
+    },
+    { id: `${runId}:plan:step:context:start`, kind: 'plan_step_started', phase: 'thinking', stepId: 'context' },
+  ]
+}
+
+export function createRunEventFromEngineTimeline(args: {
+  runId: string
+  idPrefix?: string
+  sequence: number
+  event: { type: 'plan_updated'; steps: PlanStep[] }
+}): RunEvent {
+  const idPrefix = args.idPrefix ?? args.runId
+  return {
+    id: `${idPrefix}:plan-updated:${args.sequence}`,
+    kind: 'plan_updated',
+    phase: 'thinking',
+    steps: args.event.steps,
+  }
 }
 
 export function appendRunMessages(
