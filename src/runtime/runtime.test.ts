@@ -56,4 +56,39 @@ describe('runtime', () => {
     })
     expect(result.ok).toBe(true)
   })
+
+  it('registers tavily_search when Tavily tool config is enabled', async () => {
+    const createAppDb = vi.fn().mockResolvedValue({ query: vi.fn().mockResolvedValue([]), run: vi.fn().mockResolvedValue(undefined) })
+    const rt = await createRuntime({
+      createAppDb,
+      toolSettings: {
+        tavily: {
+          enabled: true,
+          apiKey: 'tvly-secret',
+        },
+      },
+    })
+
+    const tool = rt.tools.get('tavily_search')
+    expect(tool?.policy?.riskLevel).toBe('safe')
+    expect(tool?.inputSchema).toMatchObject({
+      type: 'object',
+      required: ['query'],
+    })
+  })
+
+  it('does not expose tavily_search without a Tavily api key', async () => {
+    const createAppDb = vi.fn().mockResolvedValue({ query: vi.fn().mockResolvedValue([]), run: vi.fn().mockResolvedValue(undefined) })
+    const rt = await createRuntime({
+      createAppDb,
+      toolSettings: {
+        tavily: {
+          enabled: true,
+          apiKey: null,
+        },
+      },
+    })
+
+    expect(rt.tools.get('tavily_search')).toBeUndefined()
+  })
 })

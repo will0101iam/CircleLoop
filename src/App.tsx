@@ -49,8 +49,10 @@ import {
 import { runEngine, resumeRunEngineWithApproval, type PendingApprovalState } from './agent/runEngine'
 import { sanitizeThink } from './app/sanitizeThink'
 import { formatToolPayloadPreview } from './app/formatToolPayload'
+import { extractToolSources, type ToolSource } from './app/toolSources'
 import { renderAssistantBlocks } from './app/renderAssistantBlocks'
 import { buildChatContextMessages } from './app/buildChatContext'
+import { buildSystemPrompt } from './app/systemPrompt'
 import { buildFallbackSessionTitle, resolveSessionTitleFromPrompt, shouldGenerateSessionTitle } from './app/sessionTitle'
 import type { ApprovalUiState } from './app/approvalUiState'
 import { createThinkStreamParser } from './app/thinkStreamParser'
@@ -84,9 +86,6 @@ import {
 import { AttachIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, CustomizeIcon, PlusIcon, TaskIcon } from './components/Icons'
 import { getUsableContextCharBudget } from './llm/modelContextBudget'
 
-const SYSTEM_PROMPT =
-  'You are circleloop, a coding agent. Use tools when needed. Keep answers concise and precise. Use update_plan to keep the visible task checklist current when your plan or step status changes.'
-
 type PendingApprovalRecord = {
   chatId: string
   runId: string
@@ -114,8 +113,9 @@ type ProcessStepItem = {
   approvalRequested?: Extract<ApprovalEvent, { kind: 'approval_requested' }>
   approvalResolved?: Extract<ApprovalEvent, { kind: 'approval_resolved' }>
   resultPreview?: string | null
+  sources: ToolSource[]
 }
-type SettingsTab = 'general' | 'providers' | 'skills' | 'mcp' | 'usage' | 'assistant'
+type SettingsTab = 'general' | 'providers' | 'skills' | 'tools' | 'usage' | 'assistant'
 type MainView = 'chat' | 'settings'
 type SettingsProviderDialogState = { providerId: string; mode: 'connect' | 'edit' } | null
 
@@ -476,7 +476,7 @@ function App(props?: { __testInitialState?: TestInitialState }) {
     return chats.find((chat) => chat.id === chatId)?.workspacePath ?? null
   }
 
-  async function buildRuntimeForWorkspace(nextWorkspacePath: string | null) {
+  async function buildRuntimeForWorkspace(nextWorkspacePath: string | null, nextConfigStatus = configStatus) {
     if (!isTauri()) return null
     const baseFileOps = await createTauriFileOps()
     const fileOps = createJournaledFileOps({
@@ -485,7 +485,7 @@ function App(props?: { __testInitialState?: TestInitialState }) {
       journal: fileRollbackJournalRef.current,
     })
     const commandOps = await createTauriCommandOps()
-    return createRuntime({ workspacePath: nextWorkspacePath ?? undefined, fileOps, commandOps })
+    return createRuntime({ workspacePath: nextWorkspacePath ?? undefined, fileOps, commandOps, toolSettings: nextConfigStatus.tools })
   }
 
   async function refreshConfigStatus() {
@@ -697,6 +697,7 @@ function App(props?: { __testInitialState?: TestInitialState }) {
       await saveMinimaxConfig({
         defaults,
         providers: nextProviders,
+        tools: configStatus.tools,
       })
       await refreshConfigStatus()
       if (input?.closeDialog) setSettingsProviderDialog(null)
@@ -855,11 +856,8 @@ function App(props?: { __testInitialState?: TestInitialState }) {
     }
     const activeResolvedRuntime = resolvedRuntime
 
-    let activeRuntime = runtime
-    if (!activeRuntime) {
-      activeRuntime = await buildRuntimeForWorkspace(selectedWorkspacePath)
-      if (activeRuntime) setRuntime(activeRuntime)
-    }
+    const activeRuntime = await buildRuntimeForWorkspace(selectedWorkspacePath, latestConfig)
+    if (activeRuntime) setRuntime(activeRuntime)
     if (!activeRuntime) {
       setChatMessages((prev) => ({
         ...prev,
@@ -951,8 +949,9 @@ function App(props?: { __testInitialState?: TestInitialState }) {
 
     try {
       const modelCharBudget = getUsableContextCharBudget(activeResolvedRuntime.model)
-      const contextMessages = buildChatContextMessages({
-        systemMessage: { role: 'system', content: SYSTEM_PROMPT },
+        const systemMessage: OpenAICompatChatMessage = { role: 'system', content: buildSystemPrompt() }
+        const contextMessages = buildChatContextMessages({
+          systemMessage,
         thread: threadBeforeUser,
         newUserText: userText,
         maxContextChars: modelCharBudget,
@@ -1167,7 +1166,7 @@ function App(props?: { __testInitialState?: TestInitialState }) {
     }
     ;(async () => {
       try {
-        const nextRuntime = await buildRuntimeForWorkspace(selectedWorkspacePath)
+        const nextRuntime = await buildRuntimeForWorkspace(selectedWorkspacePath, configStatus)
         if (!cancelled) setRuntime(nextRuntime)
       } catch {
         if (!cancelled) setRuntime(null)
@@ -1176,7 +1175,7 @@ function App(props?: { __testInitialState?: TestInitialState }) {
     return () => {
       cancelled = true
     }
-  }, [selectedChatId, selectedWorkspacePath])
+  }, [configStatus, selectedChatId, selectedWorkspacePath])
 
   useEffect(() => {
     if (!chatStore || !chatStoreHydrated) return
@@ -1416,11 +1415,8 @@ function App(props?: { __testInitialState?: TestInitialState }) {
       return
     }
     const activeResolvedRuntime = resolvedRuntime
-    let activeRuntime = runtime
-    if (!activeRuntime) {
-      activeRuntime = await buildRuntimeForWorkspace(selectedWorkspacePath)
-      if (activeRuntime) setRuntime(activeRuntime)
-    }
+    const activeRuntime = await buildRuntimeForWorkspace(selectedWorkspacePath, latestConfig)
+    if (activeRuntime) setRuntime(activeRuntime)
     if (!activeRuntime) {
       setChatMessages((prev) => ({
         ...prev,
@@ -1548,8 +1544,9 @@ function App(props?: { __testInitialState?: TestInitialState }) {
     }
 
     try {
-      const fullContextMessages = buildChatContextMessages({
-        systemMessage: { role: 'system', content: SYSTEM_PROMPT },
+        const systemMessage: OpenAICompatChatMessage = { role: 'system', content: buildSystemPrompt() }
+        const fullContextMessages = buildChatContextMessages({
+          systemMessage,
         thread: selectedThread,
         newUserText: task,
         maxContextChars: Number.MAX_SAFE_INTEGER,
@@ -1603,8 +1600,8 @@ function App(props?: { __testInitialState?: TestInitialState }) {
         }
       }
 
-      const contextMessages = buildChatContextMessages({
-        systemMessage: { role: 'system', content: SYSTEM_PROMPT },
+        const contextMessages = buildChatContextMessages({
+          systemMessage,
         thread: selectedThread,
         newUserText: task,
         maxContextChars: modelCharBudget,
@@ -2179,6 +2176,7 @@ function App(props?: { __testInitialState?: TestInitialState }) {
         const resultPreview = item.result
           ? formatToolPayloadPreview(item.result.payload, { maxPreviewChars: 280 }).previewText.replace(/\s+/g, ' ').trim()
           : null
+        const sources = item.result ? extractToolSources(item.result.name, item.result.payload) : []
         return {
           key: item.key,
           title: getProcessStepTitle({
@@ -2194,6 +2192,7 @@ function App(props?: { __testInitialState?: TestInitialState }) {
           approvalRequested: item.approvalRequested,
           approvalResolved: item.approvalResolved,
           resultPreview,
+          sources,
         }
       })
   }
@@ -2286,6 +2285,18 @@ function App(props?: { __testInitialState?: TestInitialState }) {
               <div className="mira-process-step-result">
                 <span className="mira-process-step-result-label">Result</span>
                 <span className="mira-process-step-result-preview">{item.resultPreview}</span>
+              </div>
+            ) : null}
+            {item.sources.length > 0 ? (
+              <div className="mira-process-step-sources">
+                <span className="mira-process-step-result-label">Sources</span>
+                <div className="mira-process-step-source-list">
+                  {item.sources.map((source) => (
+                    <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="mira-process-step-source">
+                      {source.title} — {source.url}
+                    </a>
+                  ))}
+                </div>
               </div>
             ) : null}
             {item.interactive ? (
@@ -2682,7 +2693,7 @@ function App(props?: { __testInitialState?: TestInitialState }) {
                   {[
                     ['providers', '服务商'],
                     ['skills', 'Skills'],
-                    ['mcp', 'MCP'],
+                    ['tools', 'Tools'],
                     ['usage', '用量统计'],
                     ['assistant', '助理'],
                   ].map(([tab, label]) => (
@@ -2853,8 +2864,30 @@ function App(props?: { __testInitialState?: TestInitialState }) {
               {settingsActiveTab === 'skills' ? (
                 <div className="mira-settings-placeholder">这里后续可以放 Skills 的启用状态、排序、默认行为和可见性设置。</div>
               ) : null}
-              {settingsActiveTab === 'mcp' ? (
-                <div className="mira-settings-placeholder">这里后续可以放 MCP 服务连接、授权状态和服务开关。</div>
+              {settingsActiveTab === 'tools' ? (
+                <div className="mira-settings-cards">
+                  <section className="mira-settings-card">
+                    <div className="mira-settings-card-head">
+                      <div>
+                        <h3>工具列表</h3>
+                        <p>当前可供 LLM 调用的工具。</p>
+                      </div>
+                      <div className="mira-static-status">当前 1 个</div>
+                    </div>
+                    <div className="mira-provider-list">
+                      <div className="mira-provider-row">
+                        <span className="mira-provider-row-mark" title="Tavily Search">T</span>
+                        <div className="mira-provider-row-body">
+                          <div className="mira-provider-summary-title">Tavily Search</div>
+                          <div className="mira-provider-summary-meta">联网搜索工具，可供 LLM 查询实时网页信息并返回信源 URL。</div>
+                        </div>
+                        <span className="mira-static-status">
+                          {configStatus.tools.tavily.enabled && configStatus.tools.tavily.apiKey ? '已启用' : '未配置'}
+                        </span>
+                      </div>
+                    </div>
+                  </section>
+                </div>
               ) : null}
               {settingsActiveTab === 'usage' ? (
                 <div className="mira-settings-placeholder">这里后续可以放模型调用次数、token 统计和最近错误记录。</div>

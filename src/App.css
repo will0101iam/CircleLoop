@@ -1044,6 +1044,27 @@
   opacity: 1;
 }
 
+.mira-process-step-sources {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #000000;
+  font: 11px/1.45 var(--mono);
+}
+
+.mira-process-step-source-list {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.mira-process-step-source {
+  color: #000000;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+
 .mira-tool-line {
   display: flex;
   align-items: baseline;

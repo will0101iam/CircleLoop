@@ -132,6 +132,42 @@ describe('loadMinimaxConfig', () => {
     expect(status.providers.openrouter?.models).toEqual(['gpt-4o-mini', 'deepseek-chat'])
     expect(status.providers.ollama?.defaultModel).toBe('llama3.1')
   })
+
+  it('loads tool config and masks tool api keys in JSON', async () => {
+    const readTextFile = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        defaults: {
+          provider: 'openrouter',
+          model: 'gpt-4o-mini',
+        },
+        providers: {
+          openrouter: {
+            label: 'OpenRouter',
+            baseUrl: 'https://openrouter.ai/api/v1',
+            apiKey: 'or-secret',
+            models: ['gpt-4o-mini'],
+            defaultModel: 'gpt-4o-mini',
+          },
+        },
+        tools: {
+          tavily: {
+            enabled: true,
+            apiKey: 'tvly-secret',
+          },
+        },
+      }),
+    )
+
+    const status = await loadMinimaxConfig({
+      isTauri: () => true,
+      readTextFile,
+      appConfigDir: async () => '/Users/alice/Library/Application Support/com.example.app',
+      join: (...parts) => parts.join('/'),
+    })
+
+    expect(status.tools.tavily).toEqual({ enabled: true, apiKey: 'tvly-secret' })
+    expect(JSON.stringify(status)).not.toContain('tvly-secret')
+  })
 })
 
 describe('saveMinimaxConfig', () => {
@@ -174,5 +210,34 @@ describe('saveMinimaxConfig', () => {
     const savedJson = JSON.parse(writeTextFile.mock.calls[0][1])
     expect(savedJson.defaults.provider).toBe('openrouter')
     expect(savedJson.providers.openrouter.models).toEqual(['gpt-4o-mini', 'deepseek-chat'])
+  })
+
+  it('writes tool config alongside provider config', async () => {
+    const writeTextFile = vi.fn().mockResolvedValue(undefined)
+    const mkdir = vi.fn().mockResolvedValue(undefined)
+
+    await saveMinimaxConfig(
+      {
+        defaults: {
+          provider: 'openrouter',
+          model: 'gpt-4o-mini',
+        },
+        providers: {},
+        tools: {
+          tavily: {
+            enabled: true,
+            apiKey: 'tvly-secret',
+          },
+        },
+      },
+      {
+        isTauri: () => true,
+        mkdir,
+        writeTextFile,
+      },
+    )
+
+    const savedJson = JSON.parse(writeTextFile.mock.calls[0][1])
+    expect(savedJson.tools.tavily).toEqual({ enabled: true, apiKey: 'tvly-secret' })
   })
 })

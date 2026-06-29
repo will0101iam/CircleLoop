@@ -15,9 +15,11 @@ import { createListSessionsTool } from '../tools/listSessionsTool'
 import { createQuerySqlTool } from '../tools/querySqlTool'
 import { createReadFileTool } from '../tools/readFileTool'
 import { createSearchCodeTool } from '../tools/searchCodeTool'
+import { createTavilySearchTool } from '../tools/tavilySearchTool'
 import { createToolRegistry } from '../tools/toolRegistry'
 import { createUpdatePlanTool } from '../tools/updatePlanTool'
 import { createWriteFileTool } from '../tools/writeFileTool'
+import type { ToolSettings } from '../config/config'
 
 function workspaceRequiredResult() {
   return {
@@ -56,6 +58,7 @@ export async function createRuntime(deps?: {
   workspacePath?: string
   fileOps?: FileOps
   commandOps?: CommandOps
+  toolSettings?: ToolSettings
 }) {
   const db = await (deps?.createAppDb ?? createAppDb)()
   const sessionStore = createSessionStore({ db, createId: deps?.createId, now: deps?.now })
@@ -66,6 +69,9 @@ export async function createRuntime(deps?: {
   tools.register(createCreateSessionTool({ store: sessionStore }))
   tools.register(createListSessionsTool({ store: sessionStore }))
   tools.register(createUpdatePlanTool())
+  if (deps?.toolSettings?.tavily.enabled && deps.toolSettings.tavily.apiKey) {
+    tools.register(createTavilySearchTool({ apiKey: deps.toolSettings.tavily.apiKey }))
+  }
   if (deps?.fileOps) {
     registerWorkspaceAwareTool(tools, {
       workspacePath: deps.workspacePath,

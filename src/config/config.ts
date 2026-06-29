@@ -21,6 +21,15 @@ export type LlmDefaults = {
   model: string | null
 }
 
+export type TavilyToolConfig = {
+  enabled: boolean
+  apiKey: string | null
+}
+
+export type ToolSettings = {
+  tavily: TavilyToolConfig
+}
+
 export type MinimaxConfigStatus = {
   configured: boolean
   configPath: string | null
@@ -29,6 +38,7 @@ export type MinimaxConfigStatus = {
   model: string | null
   defaults: LlmDefaults
   providers: Record<string, LlmProviderConfig>
+  tools: ToolSettings
   getApiKey: (providerId?: string | null) => string | null
   toJSON?: () => Record<string, unknown>
 }
@@ -64,6 +74,7 @@ export function createEmptyMinimaxConfigStatus(configPath: string | null = null)
       model: null,
     },
     providers: defaultProviders(),
+    tools: defaultToolSettings(),
     getApiKey: () => null,
     toJSON() {
       return {
@@ -74,6 +85,7 @@ export function createEmptyMinimaxConfigStatus(configPath: string | null = null)
         model: null,
         defaults: { provider: null, model: null },
         providers: stripProviderSecrets(defaultProviders()),
+        tools: stripToolSecrets(defaultToolSettings()),
       }
     },
   }
@@ -300,6 +312,28 @@ function parseProviderConfig(raw: Record<string, unknown>): LlmProviderConfig {
   }
 }
 
+function defaultToolSettings(): ToolSettings {
+  return {
+    tavily: {
+      enabled: false,
+      apiKey: null,
+    },
+  }
+}
+
+function parseToolSettings(raw: unknown): ToolSettings {
+  const defaults = defaultToolSettings()
+  if (!raw || typeof raw !== 'object') return defaults
+  const record = raw as Record<string, unknown>
+  const tavily = record.tavily && typeof record.tavily === 'object' ? (record.tavily as Record<string, unknown>) : null
+  return {
+    tavily: {
+      enabled: typeof tavily?.enabled === 'boolean' ? tavily.enabled : defaults.tavily.enabled,
+      apiKey: typeof tavily?.apiKey === 'string' ? tavily.apiKey : null,
+    },
+  }
+}
+
 function normalizeProviderRegistry(
   rawProviders: Record<string, unknown>,
   defaultsInput?: { provider: string | null; model: string | null },
@@ -330,6 +364,7 @@ function normalizeProviderRegistry(
 function parseMinimaxConfig(jsonText: string): {
   defaults: LlmDefaults
   providers: Record<string, LlmProviderConfig>
+  tools: ToolSettings
 } | null {
   try {
     const raw = JSON.parse(jsonText) as unknown
@@ -338,10 +373,13 @@ function parseMinimaxConfig(jsonText: string): {
 
     if (obj.providers && typeof obj.providers === 'object' && obj.defaults && typeof obj.defaults === 'object') {
       const defaultsObj = obj.defaults as Record<string, unknown>
-      return normalizeProviderRegistry(obj.providers as Record<string, unknown>, {
-        provider: typeof defaultsObj.provider === 'string' ? defaultsObj.provider : null,
-        model: typeof defaultsObj.model === 'string' ? defaultsObj.model : null,
-      })
+      return {
+        ...normalizeProviderRegistry(obj.providers as Record<string, unknown>, {
+          provider: typeof defaultsObj.provider === 'string' ? defaultsObj.provider : null,
+          model: typeof defaultsObj.model === 'string' ? defaultsObj.model : null,
+        }),
+        tools: parseToolSettings(obj.tools),
+      }
     }
 
     const provider = typeof obj.provider === 'string' ? obj.provider : 'minimax'
@@ -349,20 +387,32 @@ function parseMinimaxConfig(jsonText: string): {
     const model = typeof obj.model === 'string' ? obj.model : null
     const apiKey = typeof obj.apiKey === 'string' ? obj.apiKey : null
 
-    return normalizeProviderRegistry(
-      {
-        [provider]: {
-          label: getProviderLabel(provider),
-          baseUrl,
-          apiKey,
-          models: model ? [model] : [],
-          defaultModel: model,
+    return {
+      ...normalizeProviderRegistry(
+        {
+          [provider]: {
+            label: getProviderLabel(provider),
+            baseUrl,
+            apiKey,
+            models: model ? [model] : [],
+            defaultModel: model,
+          },
         },
-      },
-      { provider, model },
-    )
+        { provider, model },
+      ),
+      tools: parseToolSettings(obj.tools),
+    }
   } catch {
     return null
+  }
+}
+
+function stripToolSecrets(tools: ToolSettings): ToolSettings {
+  return {
+    tavily: {
+      ...tools.tavily,
+      apiKey: tools.tavily.apiKey ? '***' : null,
+    },
   }
 }
 
@@ -459,6 +509,7 @@ export async function loadMinimaxConfig(deps?: {
     model: parsed.defaults.model,
     defaults: parsed.defaults,
     providers: parsed.providers,
+    tools: parsed.tools,
     getApiKey: (providerId?: string | null) => {
       const targetProvider = providerId ?? parsed.defaults.provider
       if (!targetProvider) return null
@@ -473,6 +524,7 @@ export async function loadMinimaxConfig(deps?: {
         model: parsed.defaults.model,
         defaults: parsed.defaults,
         providers: stripProviderSecrets(parsed.providers),
+        tools: stripToolSecrets(parsed.tools),
       }
     },
   }
@@ -481,7 +533,7 @@ export async function loadMinimaxConfig(deps?: {
 export async function saveMinimaxConfig(
   input:
     | { baseUrl: string; apiKey: string; model: string; provider?: string }
-    | { defaults: LlmDefaults; providers: Record<string, LlmProviderConfig> },
+    | { defaults: LlmDefaults; providers: Record<string, LlmProviderConfig>; tools?: ToolSettings },
   deps?: {
     isTauri?: () => boolean
     mkdir?: MkdirFn
@@ -498,7 +550,10 @@ export async function saveMinimaxConfig(
   await mkdir('circleloop', { baseDir: fs.BaseDirectory.AppConfig, recursive: true })
   const normalized =
     'defaults' in input
-      ? input
+      ? {
+          ...input,
+          tools: input.tools ?? defaultToolSettings(),
+        }
       : {
           defaults: {
             provider: input.provider ?? 'minimax',
@@ -519,6 +574,7 @@ export async function saveMinimaxConfig(
               model: input.model,
             },
           ).providers,
+          tools: defaultToolSettings(),
         }
   await writeTextFile(
     'circleloop/config.json',

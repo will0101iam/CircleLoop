@@ -128,6 +128,12 @@ describe('Mira UI', () => {
                   defaultModel: null,
                 },
               },
+              tools: {
+                tavily: {
+                  enabled: true,
+                  apiKey: 'tvly-secret',
+                },
+              },
               getApiKey: () => 'secret',
             },
           } as any
@@ -141,6 +147,7 @@ describe('Mira UI', () => {
 
     expect(screen.queryByRole('button', { name: 'Skills' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'MCP' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Tools' })).not.toBeInTheDocument()
 
     expect(screen.queryByText('bytedance')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Status' })).not.toBeInTheDocument()
@@ -153,7 +160,15 @@ describe('Mira UI', () => {
     expect(screen.getByText('管理 CircleLoop 和 Claude Code 设置')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '服务商' })).toHaveClass('active')
     expect(screen.getByRole('button', { name: 'Skills' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'MCP' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'MCP' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Tools' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Tools' }))
+    expect(screen.queryByText('这里后续可以管理 Tavily、MCP 服务、浏览器、搜索、代码索引等可供 LLM 调用的工具。')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '工具列表' })).toBeInTheDocument()
+    expect(screen.getByText('Tavily Search')).toBeInTheDocument()
+    expect(screen.getByText('联网搜索工具，可供 LLM 查询实时网页信息并返回信源 URL。')).toBeInTheDocument()
+    expect(screen.getByText('已启用')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '服务商' }))
     expect(screen.queryByRole('button', { name: '模型与渠道' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'CLI 工具' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '素材库' })).not.toBeInTheDocument()
@@ -1185,6 +1200,69 @@ describe('Mira UI', () => {
     expect(container.querySelector('.mira-answer-segments')).not.toBeInTheDocument()
     const finalAnswerBody = screen.getByTestId('thread-message-r1').querySelector('.mira-msg-body')
     expect(finalAnswerBody?.textContent).toBe('Done')
+  })
+
+  it('renders Tavily source URLs after the search tool result', () => {
+    const thread: ThreadMessage[] = [
+      { id: 'u1', kind: 'user', text: 'search latest agent tools', time: '10:00:00' },
+      {
+        id: 'r1',
+        kind: 'run',
+        time: '10:00:01',
+        mode: 'normal',
+        status: 'completed',
+        thinkText: 'thinking',
+        events: [
+          {
+            id: 'search-exec',
+            kind: 'tool_execute',
+            phase: 'thinking',
+            anchor: 'thinking',
+            name: 'tavily_search',
+            args: { query: 'latest agent tools' },
+            groupId: 'search-1',
+          },
+          {
+            id: 'search-result',
+            kind: 'tool_result',
+            phase: 'thinking',
+            anchor: 'thinking',
+            name: 'tavily_search',
+            ok: true,
+            payload: {
+              ok: true,
+              data: {
+                results: [{ title: 'Agent Tools Overview', url: 'https://example.com/agent-tools', content: 'Overview' }],
+                sources: [{ title: 'Agent Tools Overview', url: 'https://example.com/agent-tools' }],
+              },
+            },
+            groupId: 'search-1',
+          },
+        ],
+        finalText: 'Found one source.',
+        answerSegments: [{ id: 'seg-1', kind: 'text', text: 'Found one source.' }],
+      } satisfies RunThreadMessage,
+    ]
+
+    const { container } = render(
+      <App
+        __testInitialState={{
+          chats: [{ id: 'c1', title: 'Chat 1', workspacePath: null }],
+          selectedChatId: 'c1',
+          chatMessages: { c1: thread },
+          disableAutoRuntime: true,
+        }}
+      />,
+    )
+
+    const step = container.querySelector('.mira-process-step')
+    expect(step?.textContent).toContain('Sources')
+    expect(step?.textContent).toContain('Agent Tools Overview')
+    expect(step?.textContent).toContain('https://example.com/agent-tools')
+    expect(screen.getByRole('link', { name: 'Agent Tools Overview — https://example.com/agent-tools' })).toHaveAttribute(
+      'href',
+      'https://example.com/agent-tools',
+    )
   })
 
   it('keeps process steps in first-seen order even after later steps are approved and completed', () => {
